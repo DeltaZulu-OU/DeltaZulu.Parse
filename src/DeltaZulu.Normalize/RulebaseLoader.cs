@@ -113,7 +113,7 @@ internal static class RulebaseLoader
     {
         while (true)
         {
-            while (pos < text.Length && text[pos] == '\n')
+            while (pos < text.Length && (text[pos] == '\n' || text[pos] == '\r'))
                 pos++;
             if (pos >= text.Length)
                 return false;
@@ -146,6 +146,8 @@ internal static class RulebaseLoader
                 return buf.Length == 0 ? null : buf.ToString();
 
             char c = text[pos++];
+            if (c == '\r' && pos < text.Length && text[pos] == '\n')
+                c = text[pos++]; /* CRLF line ending: fold to a single LF */
             if (c == '\n')
             {
                 ctx.ConfLineNumber++;

@@ -40,4 +40,19 @@ public class LogNormContextTests
         Assert.IsTrue(errors.Any(e => e.Contains("cannot be loaded after", StringComparison.Ordinal)));
     }
 
+    [TestMethod]
+    public void LoadSamplesFromString_AcceptsCrlfLineEndings()
+    {
+        /* CRLF must terminate a logical line without the '\r' leaking into
+         * the rule pattern as a literal; otherwise every non-final rule of a
+         * CRLF rulebase (e.g. a multi-line C# raw string in a source file
+         * checked out with core.autocrlf, or a rulebase file edited on
+         * Windows) compiles to a PDAG path no real message can match */
+        var ctx = new LogNormContext();
+        Assert.AreEqual(0, ctx.LoadSamplesFromString(
+            "rule=:duration %field:duration% bytes\r\nrule=:duration %field:duration%\r\n"));
+
+        Assert.AreEqual(0, ctx.Normalize("duration 0:00:42 bytes", out JsonObject j));
+        Assert.AreEqual("0:00:42", j["field"]!.GetValue<string>());
+    }
 }

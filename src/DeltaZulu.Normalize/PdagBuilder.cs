@@ -131,7 +131,8 @@ internal static class PdagBuilder
         {
             if (existing.PrsId == parser.PrsId && existing.Conf == parser.Conf)
             {
-                existing.Node.RefCount++;
+                /* reusing the existing edge, not adding a new one: the node's
+                 * incoming-edge count is unchanged, so RefCount must not bump */
                 nextnode = existing.Node;
                 return 0;
             }
