@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DeltaZulu.Normalize/DeltaZulu.Normalize.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DeltaZulu.Normalize.Tests/DeltaZulu.Normalize.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/LogNormalizer.Cli/LogNormalizer.Cli.csproj" />
+  </Folder>
+</Solution>
