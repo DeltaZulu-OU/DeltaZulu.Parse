@@ -3,6 +3,29 @@ using System.Text.Json.Nodes;
 namespace DeltaZulu.Normalize;
 
 /// <summary>
+/// How an edge's value is produced. Matching and extraction are split so
+/// backtracked paths never pay for extraction; the mode picks the cheapest
+/// correct way to produce the value on the success unwind.
+/// </summary>
+internal enum ExtractMode : byte
+{
+    /// <summary>Re-run the parser with wantValue on the success unwind.
+    /// Correct for any deterministic parser; used when the value is derived
+    /// (stripped quotes, numeric conversion, sub-objects).</summary>
+    Deferred = 0,
+
+    /// <summary>The value is exactly the matched substring; materialize it
+    /// from the recorded (offset, length) without re-parsing.</summary>
+    RawSpan = 1,
+
+    /// <summary>Extract during matching. Used for "repeat" (which builds its
+    /// results as a side effect of matching anyway) and the structured motifs
+    /// whose match phase is expensive enough that re-running it would cost
+    /// more than eager extraction saves.</summary>
+    Eager = 2,
+}
+
+/// <summary>
 /// One outgoing edge of a compiled PDAG node. The runtime analog of
 /// <see cref="ParserInstance"/>, flattened into a struct so a node's edges sit
 /// contiguously in one cache-friendly array.
@@ -27,13 +50,17 @@ internal readonly struct CompiledEdge
     /// <see cref="ParserTable.CustomTypeId"/>.</summary>
     public readonly byte PrsId;
 
+    /// <summary>How this edge's value is produced (decided at compile time
+    /// from the parser type and its configuration).</summary>
+    public readonly ExtractMode Extract;
+
     /// <summary>First char of a literal edge's text, letting the walker reject
     /// the edge without a call. '\0' disables the filter (non-literal edges,
     /// and the rare literal that is empty or starts with NUL).</summary>
     public readonly char LiteralFirstChar;
 
     public CompiledEdge(byte prsId, char literalFirstChar, int targetNode,
-        int customTypeIdx, object? data, string? name)
+        int customTypeIdx, object? data, string? name, ExtractMode extract)
     {
         PrsId = prsId;
         LiteralFirstChar = literalFirstChar;
@@ -41,6 +68,7 @@ internal readonly struct CompiledEdge
         CustomTypeIdx = customTypeIdx;
         Data = data;
         Name = name;
+        Extract = extract;
     }
 }
 

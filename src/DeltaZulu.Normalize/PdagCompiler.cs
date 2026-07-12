@@ -139,9 +139,72 @@ internal static class PdagCompiler
                         firstChar = lit[0];
                 }
                 tmp.Edges.Add(new CompiledEdge(prs.PrsId, firstChar, targetIdx,
-                    prs.CustomTypeIndex, data, prs.Name));
+                    prs.CustomTypeIndex, data, prs.Name, ClassifyExtract(prs.PrsId, data)));
             }
             return idx;
+        }
+
+        /// <summary>
+        /// Pick the cheapest correct extraction mode for a parser instance.
+        /// RawSpan is only valid when the parser's wanted value is exactly the
+        /// matched substring — for the format-configurable parsers that
+        /// depends on their construct-time data, which is why this runs at
+        /// compile time and not per message.
+        /// </summary>
+        private static ExtractMode ClassifyExtract(byte prsId, object? data)
+        {
+            switch (ParserTable.IdToName(prsId))
+            {
+                /* value == matched substring, unconditionally */
+                case "literal":
+                case "whitespace":
+                case "word":
+                case "alpha":
+                case "rest":
+                case "kernel-timestamp":
+                case "date-iso":
+                case "time-24hr":
+                case "time-12hr":
+                case "duration":
+                case "ipv4":
+                case "ipv6":
+                case "mac48":
+                case "string-to":
+                case "char-to":
+                case "char-sep":
+                    return ExtractMode.RawSpan;
+
+                /* value == matched substring in the default string format only */
+                case "number":
+                    return ((NumberParsers.NumberData)data!).FmtMode == FormatMode.AsString
+                        ? ExtractMode.RawSpan : ExtractMode.Deferred;
+                case "float":
+                    return ((NumberParsers.FloatData)data!).FmtMode == FormatMode.AsString
+                        ? ExtractMode.RawSpan : ExtractMode.Deferred;
+                case "hexnumber":
+                    return ((NumberParsers.HexNumberData)data!).FmtMode == FormatMode.AsString
+                        ? ExtractMode.RawSpan : ExtractMode.Deferred;
+                case "date-rfc3164":
+                case "date-rfc5424":
+                    return ((DateTimeParsers.DateData)data!).FmtMode == FormatMode.AsString
+                        ? ExtractMode.RawSpan : ExtractMode.Deferred;
+
+                /* matching is the expensive part; re-running it to extract
+                 * would cost more than eager extraction saves */
+                case "repeat":
+                case "json":
+                case "cee-syslog":
+                case "cef":
+                case "v2-iptables":
+                case "name-value-list":
+                case "checkpoint-lea":
+                    return ExtractMode.Eager;
+
+                /* derived values (stripped quotes, unescaping, sub-objects):
+                 * re-run the cheap parse on the success unwind */
+                default:
+                    return ExtractMode.Deferred;
+            }
         }
 
         /// <summary>Flatten the per-node edge lists into the final contiguous arrays.</summary>

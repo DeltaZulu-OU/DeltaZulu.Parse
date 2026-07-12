@@ -45,6 +45,36 @@ public class PdagBehaviorTests
     }
 
     [TestMethod]
+    public void Repeat_FailOnDuplicate_SkipsAlreadyExtractedFields()
+    {
+        /* merge-mode repeat: fields committed by earlier rounds must be
+         * visible to later rounds' duplicate check, steering round 2 to the
+         * second alternative. This pins the extraction timing the two-phase
+         * (measure, then materialize on unwind) walker must preserve. */
+        const string rb = """
+            rule=:l %{"name":".", "type":"repeat", "option.failOnDuplicate":true,
+                "parser": {"type":"alternative", "parser":[ {"name":"a", "type":"number"}, {"name":"b", "type":"number"} ]},
+                "while": {"type":"literal", "text":" "} }%
+            """;
+        var (r, j) = TestHelpers.Normalize(rb, "l 1 2");
+        Assert.AreEqual(0, r);
+        AssertJsonEquals("""{ "a": "1", "b": "2" }""", j);
+    }
+
+    [TestMethod]
+    public void Repeat_PermitMismatchInParser_StopsAtLastGoodMatch()
+    {
+        const string rb = """
+            rule=:l %{"name":"ns", "type":"repeat", "option.permitMismatchInParser":true,
+                "parser": {"name":"n", "type":"number"},
+                "while": {"type":"literal", "text":" "} }% END
+            """;
+        var (r, j) = TestHelpers.Normalize(rb, "l 1 2 END");
+        Assert.AreEqual(0, r);
+        AssertJsonEquals("""{ "ns": [ { "n": "1" }, { "n": "2" } ] }""", j);
+    }
+
+    [TestMethod]
     public void Repeat_StopsWhenParserAndWhileBothMatchZeroWidth()
     {
         /* "char-separated" always succeeds and can match zero characters

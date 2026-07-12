@@ -111,12 +111,23 @@ internal static class Normalizer
     /// Try a single edge at the given offset (port of tryParser). Custom
     /// types recursively parse against their own component, accepting a
     /// partial match of the remaining input.
+    ///
+    /// Match and extraction are split in two phases: this call normally only
+    /// measures (wantValue: false) and the value is produced on the success
+    /// unwind (see <see cref="ExtractMode"/>), so backtracked paths never
+    /// allocate values. Edges compiled as Eager extract here, signalled via
+    /// <paramref name="valueMaterialized"/>; a custom type under
+    /// failOnDuplicate is also eager because its match consults
+    /// <paramref name="curJson"/>, which deeper commits mutate before the
+    /// unwind reaches this edge.
     /// </summary>
     private static int TryParser(Npb npb, ref int offs, ref int parsed, ref JsonNode? value,
-        in CompiledEdge prs, bool failOnDuplicate, JsonObject? curJson, string? parserName)
+        out bool valueMaterialized, in CompiledEdge prs, bool failOnDuplicate, JsonObject? curJson,
+        string? parserName)
     {
         int r;
         int parsedToSave = npb.ParsedTo;
+        valueMaterialized = false;
 
         if (prs.PrsId == ParserTable.CustomTypeId)
         {
@@ -125,22 +136,65 @@ internal static class Normalizer
                 npb.ParsedTo = parsedToSave;
                 return ErrorCodes.WrongParser;
             }
-            value ??= new JsonObject();
             int endNode = NoNode;
-            r = NormalizeRec(npb, npb.Snap.TypeRoots[prs.CustomTypeIdx], offs, bPartialMatch: true,
-                (JsonObject)value, ref endNode, failOnDuplicate, curJson, parserName);
+            if (failOnDuplicate)
+            {
+                valueMaterialized = true;
+                value ??= new JsonObject();
+                r = NormalizeRec(npb, npb.Snap.TypeRoots[prs.CustomTypeIdx], offs, bPartialMatch: true,
+                    (JsonObject)value, ref endNode, failOnDuplicate: true, curJson, parserName);
+                if (r != 0)
+                    value = null;
+            }
+            else
+            {
+                /* measure only: values along the nested path are discarded
+                 * (json: null) and produced again on the success unwind */
+                r = NormalizeRec(npb, npb.Snap.TypeRoots[prs.CustomTypeIdx], offs, bPartialMatch: true,
+                    json: null, ref endNode, failOnDuplicate: false, curJson, parserName);
+            }
             parsed = npb.ParsedTo - offs;
-            if (r != 0)
-                value = null;
+        }
+        else if (prs.Extract == ExtractMode.Eager)
+        {
+            valueMaterialized = true;
+            r = ParserTable.Dispatch(prs.PrsId, npb, ref offs, prs.Data, parserName,
+                out parsed, wantValue: prs.Name != null, ref value);
         }
         else
         {
             r = ParserTable.Dispatch(prs.PrsId, npb, ref offs, prs.Data, parserName,
-                out parsed, wantValue: prs.Name != null, ref value);
+                out parsed, wantValue: false, ref value);
         }
 
         npb.ParsedTo = parsedToSave;
         return r;
+    }
+
+    /// <summary>
+    /// Produce the value of an edge that matched during the measure phase, by
+    /// re-running its parser at the recorded offset. Parsers are deterministic
+    /// functions of (input, offset, config), so this reproduces the match
+    /// exactly; it runs once, on the winning path only.
+    /// </summary>
+    private static void MaterializeValue(Npb npb, in CompiledEdge prs, int offs, ref JsonNode? value)
+    {
+        int parsedToSave = npb.ParsedTo;
+        if (prs.PrsId == ParserTable.CustomTypeId)
+        {
+            var obj = new JsonObject();
+            int endNode = NoNode;
+            int r = NormalizeRec(npb, npb.Snap.TypeRoots[prs.CustomTypeIdx], offs, bPartialMatch: true,
+                obj, ref endNode, failOnDuplicate: false, curJson: null, parserName: prs.Name);
+            value = r == 0 ? obj : null;
+        }
+        else
+        {
+            int i = offs;
+            ParserTable.Dispatch(prs.PrsId, npb, ref i, prs.Data, prs.Name,
+                out _, wantValue: true, ref value);
+        }
+        npb.ParsedTo = parsedToSave;
     }
 
     /// <summary>Record the segment for the matching-rule mock-up (deepest-first, reversed at emit).</summary>
@@ -197,7 +251,8 @@ internal static class Normalizer
 
             int i = offs;
             int attemptParsedTo = offs;
-            int localR = TryParser(npb, ref i, ref parsed, ref value, in prs, failOnDuplicate, json, prs.Name);
+            int localR = TryParser(npb, ref i, ref parsed, ref value, out bool valueMaterialized,
+                in prs, failOnDuplicate, json, prs.Name);
             if (localR == 0)
             {
                 parsedTo = i + parsed;
@@ -207,6 +262,13 @@ internal static class Normalizer
                     failOnDuplicate, curJson, parserName);
                 if (r == 0)
                 {
+                    if (!valueMaterialized && json != null && prs.Name != null)
+                    {
+                        if (prs.Extract == ExtractMode.RawSpan)
+                            value = JsonValue.Create(npb.Str.Substring(offs, parsed));
+                        else
+                            MaterializeValue(npb, in prs, offs, ref value);
+                    }
                     int rFix = FixJson(ref value, json, in prs, failOnDuplicate);
                     if (rFix != 0)
                         return rFix;

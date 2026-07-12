@@ -171,7 +171,9 @@ internal static class RepeatParser
                     if (key == ".")
                         toAdd = val;
                 }
-                jsonArr.Add(Normalizer.Detach(toAdd));
+                if (!ReferenceEquals(toAdd, parsedValue))
+                    parsedValue.Remove("."); /* detach, so no clone is needed */
+                jsonArr.Add(toAdd);
                 parsedValue = null;
             }
 
