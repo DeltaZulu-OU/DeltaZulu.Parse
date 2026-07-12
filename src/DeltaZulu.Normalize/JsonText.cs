@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -27,19 +26,18 @@ internal static class JsonText
         if (!TryFindObjectOrArrayEnd(text, offs, out int endExclusive))
             return false;
 
-        byte[] utf8 = Encoding.UTF8.GetBytes(text, offs, endExclusive - offs);
-        var reader = new Utf8JsonReader(utf8, isFinalBlock: true, state: default);
+        /* parse the char span directly (the serializer transcodes via pooled
+         * buffers), instead of allocating a UTF-8 copy of the slice */
         try
         {
-            node = JsonNode.Parse(ref reader, new JsonNodeOptions { PropertyNameCaseInsensitive = false });
+            node = JsonSerializer.Deserialize<JsonNode?>(text.AsSpan(offs, endExclusive - offs));
         }
         catch (JsonException)
         {
             return false;
         }
 
-        int bytesConsumed = (int)reader.BytesConsumed;
-        charsConsumed = Encoding.UTF8.GetCharCount(utf8, 0, bytesConsumed);
+        charsConsumed = endExclusive - offs;
 
         /* json-c consumes whitespace following the value; emulate that */
         while (offs + charsConsumed < text.Length && TextRules.IsSpace(text[offs + charsConsumed]))
@@ -59,7 +57,10 @@ internal static class JsonText
         if (offs >= text.Length || (text[offs] != '{' && text[offs] != '['))
             return false;
 
-        var expectedClosers = new Stack<char>();
+        /* depth counting only; a mismatched closer ("{]") yields a candidate
+         * extent that the strict JSON parse then rejects, same net result as
+         * tracking the exact closer kinds — without allocating a stack */
+        int depth = 0;
         bool inString = false;
         bool escaped = false;
 
@@ -90,19 +91,15 @@ internal static class JsonText
                     inString = true;
                     break;
                 case '{':
-                    expectedClosers.Push('}');
-                    break;
                 case '[':
-                    expectedClosers.Push(']');
+                    depth++;
                     break;
                 case '}':
                 case ']':
-                    if (expectedClosers.Count == 0 || expectedClosers.Pop() != c)
-                        return false;
-                    if (expectedClosers.Count == 0)
+                    if (--depth <= 0)
                     {
                         endExclusive = i + 1;
-                        return true;
+                        return depth == 0;
                     }
                     break;
             }

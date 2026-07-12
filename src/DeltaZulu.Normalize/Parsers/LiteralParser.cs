@@ -31,18 +31,11 @@ internal static class LiteralParser
         out int parsed, bool wantValue, ref JsonNode? value)
     {
         string lit = ((Data)pdata!).Lit;
-        int i = offs;
-        int j = 0;
-        while (i < npb.StrLen)
-        {
-            if (j >= lit.Length || lit[j] != npb.Str[i])
-                break;
-            ++j;
-            ++i;
-        }
 
-        parsed = j; /* we must always report how far we got */
-        if (j != lit.Length)
+        /* vectorized prefix compare; we must always report how far we got
+         * (the partial length feeds the "unparsed-data" diagnostics) */
+        parsed = npb.Str.AsSpan(offs).CommonPrefixLength(lit);
+        if (parsed != lit.Length)
             return ErrorCodes.WrongParser;
         if (wantValue)
             value = JsonValue.Create(npb.Str.Substring(offs, parsed));

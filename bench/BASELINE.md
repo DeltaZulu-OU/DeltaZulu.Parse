@@ -86,3 +86,19 @@ Observations:
 - A naive uniform deferral (re-run every parser at unwind) was measured first and
   regressed MatchFast +17 % and Structured +24 % — the per-edge ExtractMode
   classification is what makes the trade-off pay.
+
+## Phase 4 — vectorized parser scans (SearchValues, IndexOf/IndexOfAnyExcept, CommonPrefixLength)
+
+The standard scenarios (5–15 char tokens) stay flat — SIMD needs run length to pay.
+On long fields (300-char runs, `LongFieldBenchmarks`) the effect is decisive:
+
+| Method      | Before (scalar) | After (vectorized) | Speed-up |
+|------------ |----------------:|-------------------:|---------:|
+| LongCharTo  |      1,040.2 ns |           371.6 ns |    2.8× |
+| LongQuoted  |        744.9 ns |           367.7 ns |    2.0× |
+| LongLiteral |        431.7 ns |           196.3 ns |    2.2× |
+| LongWord    |        522.4 ns |           366.6 ns |    1.4× |
+
+`char-to`/`char-sep` additionally drop from O(run · terminators) to a vectorized O(run),
+and the `json` motif no longer allocates a UTF-8 copy of the candidate slice (Structured
+allocations 2,840 → 2,798 B).

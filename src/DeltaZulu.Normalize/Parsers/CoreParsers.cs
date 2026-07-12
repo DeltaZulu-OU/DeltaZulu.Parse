@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -5,20 +6,27 @@ namespace DeltaZulu.Normalize.Parsers;
 
 /// <summary>
 /// Simple text motifs: whitespace, word, alpha, rest, string-to, char-to,
-/// char-sep and the quoted-string variants.
+/// char-sep and the quoted-string variants. Scans use the vectorized span
+/// search primitives (IndexOf/IndexOfAny/IndexOfAnyExcept).
 /// </summary>
 internal static class CoreParsers
 {
+    /// <summary>The C-locale isspace() set (see TextRules.IsSpace).</summary>
+    private static readonly SearchValues<char> SpaceChars = SearchValues.Create(" \t\n\v\f\r");
+
+    private static readonly SearchValues<char> AlphaChars =
+        SearchValues.Create("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
+
     /// <summary>All whitespace up to the first non-whitespace char; must start on whitespace.</summary>
     public static int ParseWhitespace(Npb npb, ref int offs, object? pdata, string? parserName,
         out int parsed, bool wantValue, ref JsonNode? value)
     {
         parsed = 0;
-        int i = offs;
-        if (!TextRules.IsSpace(npb.At(i)))
+        if (!TextRules.IsSpace(npb.At(offs)))
             return ErrorCodes.WrongParser;
-        for (i++; i < npb.StrLen && TextRules.IsSpace(npb.Str[i]); i++) { }
-        parsed = i - offs;
+        ReadOnlySpan<char> rem = npb.Str.AsSpan(offs + 1);
+        int idx = rem.IndexOfAnyExcept(SpaceChars);
+        parsed = 1 + (idx < 0 ? rem.Length : idx);
         if (wantValue)
             value = JsonValue.Create(npb.Str.Substring(offs, parsed));
         return 0;
@@ -28,13 +36,11 @@ internal static class CoreParsers
     public static int ParseWord(Npb npb, ref int offs, object? pdata, string? parserName,
         out int parsed, bool wantValue, ref JsonNode? value)
     {
-        parsed = 0;
-        int i = offs;
-        while (i < npb.StrLen && npb.Str[i] != ' ')
-            i++;
-        if (i == offs)
+        ReadOnlySpan<char> rem = npb.Str.AsSpan(offs);
+        int idx = rem.IndexOf(' ');
+        parsed = idx < 0 ? rem.Length : idx;
+        if (parsed == 0)
             return ErrorCodes.WrongParser;
-        parsed = i - offs;
         if (wantValue)
             value = JsonValue.Create(npb.Str.Substring(offs, parsed));
         return 0;
@@ -44,13 +50,11 @@ internal static class CoreParsers
     public static int ParseAlpha(Npb npb, ref int offs, object? pdata, string? parserName,
         out int parsed, bool wantValue, ref JsonNode? value)
     {
-        parsed = 0;
-        int i = offs;
-        while (i < npb.StrLen && TextRules.IsAlpha(npb.Str[i]))
-            i++;
-        if (i == offs)
+        ReadOnlySpan<char> rem = npb.Str.AsSpan(offs);
+        int idx = rem.IndexOfAnyExcept(AlphaChars);
+        parsed = idx < 0 ? rem.Length : idx;
+        if (parsed == 0)
             return ErrorCodes.WrongParser;
-        parsed = i - offs;
         if (wantValue)
             value = JsonValue.Create(npb.Str.Substring(offs, parsed));
         return 0;
@@ -97,36 +101,19 @@ internal static class CoreParsers
     {
         parsed = 0;
         string toFind = ((StringToData)pdata!).ToFind;
-        int i = offs;
-        bool found = false;
 
-        /* hunt for the first letter, then check the rest of the string;
-         * note the parser can never match an empty prefix (i++ first) */
-        while (!found && i < npb.StrLen)
-        {
-            i++;
-            if (npb.At(i) == toFind[0])
-            {
-                int j = 1;
-                int m = i + 1;
-                while (m < npb.StrLen && j < toFind.Length)
-                {
-                    if (npb.Str[m] != toFind[j])
-                        break;
-                    if (j == toFind.Length - 1)
-                    {
-                        found = true;
-                        break;
-                    }
-                    j++;
-                    m++;
-                }
-            }
-        }
-        if (i == offs || i == npb.StrLen || !found)
+        /* the C scanner's inner loop needs a char *after* toFind[0] to ever
+         * set the found flag, so a single-char search string never matches;
+         * kept faithfully. The match can also never start at offs (the C
+         * loop increments before comparing). */
+        if (toFind.Length < 2 || offs >= npb.StrLen)
             return ErrorCodes.WrongParser;
 
-        parsed = i - offs;
+        int idx = npb.Str.IndexOf(toFind, offs + 1, StringComparison.Ordinal);
+        if (idx < 0)
+            return ErrorCodes.WrongParser;
+
+        parsed = idx - offs;
         if (wantValue)
             value = JsonValue.Create(npb.Str.Substring(offs, parsed));
         return 0;
@@ -136,7 +123,7 @@ internal static class CoreParsers
 
     internal sealed class CharToData
     {
-        public required string TermChars { get; init; }
+        public required SearchValues<char> TermChars { get; init; }
     }
 
     public static int ConstructCharTo(LogNormContext ctx, JsonObject config, out object? pdata)
@@ -147,7 +134,7 @@ internal static class CoreParsers
             ctx.Error("char-to type needs 'extradata' parameter");
             return ErrorCodes.BadConfig;
         }
-        pdata = new CharToData { TermChars = ed.GetValue<string>() };
+        pdata = new CharToData { TermChars = SearchValues.Create(ed.GetValue<string>()) };
         return 0;
     }
 
@@ -157,19 +144,11 @@ internal static class CoreParsers
     {
         parsed = 0;
         var data = (CharToData)pdata!;
-        int i = offs;
-        bool found = false;
-        while (i < npb.StrLen && !found)
-        {
-            if (data.TermChars.Contains(npb.Str[i]))
-                found = true;
-            else
-                ++i;
-        }
-        if (i == offs || i == npb.StrLen || !found)
+        int idx = npb.Str.AsSpan(offs).IndexOfAny(data.TermChars);
+        if (idx <= 0) /* the terminator must exist, beyond a non-empty prefix */
             return ErrorCodes.WrongParser;
 
-        parsed = i - offs;
+        parsed = idx;
         if (wantValue)
             value = JsonValue.Create(npb.Str.Substring(offs, parsed));
         return 0;
@@ -179,7 +158,7 @@ internal static class CoreParsers
 
     internal sealed class CharSeparatedData
     {
-        public required string TermChars { get; init; }
+        public required SearchValues<char> TermChars { get; init; }
     }
 
     public static int ConstructCharSeparated(LogNormContext ctx, JsonObject config, out object? pdata)
@@ -190,7 +169,7 @@ internal static class CoreParsers
             ctx.Error("char-separated type needs 'extradata' parameter");
             return ErrorCodes.BadConfig;
         }
-        pdata = new CharSeparatedData { TermChars = ed.GetValue<string>() };
+        pdata = new CharSeparatedData { TermChars = SearchValues.Create(ed.GetValue<string>()) };
         return 0;
     }
 
@@ -199,16 +178,9 @@ internal static class CoreParsers
         out int parsed, bool wantValue, ref JsonNode? value)
     {
         var data = (CharSeparatedData)pdata!;
-        int i = offs;
-        bool found = false;
-        while (i < npb.StrLen && !found)
-        {
-            if (data.TermChars.Contains(npb.Str[i]))
-                found = true;
-            else
-                ++i;
-        }
-        parsed = i - offs;
+        ReadOnlySpan<char> rem = npb.Str.AsSpan(offs);
+        int idx = rem.IndexOfAny(data.TermChars);
+        parsed = idx < 0 ? rem.Length : idx;
         if (wantValue)
             value = JsonValue.Create(npb.Str.Substring(offs, parsed));
         return 0;
@@ -221,18 +193,13 @@ internal static class CoreParsers
         out int parsed, bool wantValue, ref JsonNode? value)
     {
         parsed = 0;
-        int i = offs;
-        if (i + 2 > npb.StrLen)
+        if (offs + 2 > npb.StrLen || npb.Str[offs] != '"')
             return ErrorCodes.WrongParser;
-        if (npb.Str[i] != '"')
-            return ErrorCodes.WrongParser;
-        ++i;
-        while (i < npb.StrLen && npb.Str[i] != '"')
-            i++;
-        if (i == npb.StrLen)
+        int idx = npb.Str.AsSpan(offs + 1).IndexOf('"');
+        if (idx < 0)
             return ErrorCodes.WrongParser;
 
-        parsed = i + 1 - offs; /* "eat" terminal double quote */
+        parsed = idx + 2; /* both quotes are consumed */
         if (wantValue)
             value = JsonValue.Create(npb.Str.Substring(offs + 1, parsed - 2));
         return 0;
@@ -280,8 +247,8 @@ internal static class CoreParsers
 
         if (npb.Str[i] != '"')
         {
-            while (i < npb.StrLen && npb.Str[i] != ' ')
-                i++;
+            int idxSp = npb.Str.AsSpan(offs).IndexOf(' ');
+            i = idxSp < 0 ? npb.StrLen : offs + idxSp;
             if (i == offs)
                 return ErrorCodes.WrongParser;
             parsed = i - offs;
@@ -318,12 +285,10 @@ internal static class CoreParsers
         }
         else
         {
-            ++i;
-            while (i < npb.StrLen && npb.Str[i] != '"')
-                i++;
-            if (i == npb.StrLen)
+            int idxQ = npb.Str.AsSpan(offs + 1).IndexOf('"');
+            if (idxQ < 0)
                 return ErrorCodes.WrongParser;
-            parsed = i + 1 - offs;
+            parsed = idxQ + 2;
             cstr = npb.Str.Substring(offs + 1, parsed - 2);
         }
 

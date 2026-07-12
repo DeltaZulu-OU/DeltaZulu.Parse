@@ -35,5 +35,6 @@ internal sealed class Npb
 
     /// <summary>Character at <paramref name="i"/>, or NUL past the end.
     /// Mirrors the C library reading its NUL-terminated buffer at str[strLen].</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public char At(int i) => i < Str.Length ? Str[i] : '\0';
 }

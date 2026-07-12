@@ -29,15 +29,24 @@ This is a **direct port of the v2 engine only**:
 ## Layout
 
 - `src/DeltaZulu.Normalize/` — the library.
-  - `Pdag.cs`, `PdagBuilder.cs` — the parse DAG node/edge model and
-    construction/optimization (rule loading → DAG, priority sort, literal
-    compaction).
-  - `Normalizer.cs` — the recursive PDAG walker with backtracking.
+  - `Pdag.cs`, `PdagBuilder.cs` — the builder graph node/edge model and its
+    construction (rule loading → DAG).
+  - `CompiledPdag.cs`, `PdagCompiler.cs` — the immutable runtime snapshot the
+    builder graph is compiled into (flat node/edge struct arrays; the
+    priority sort and literal path compaction run during this flattening).
+    Because compilation never mutates the builder graph, rulebases can be
+    loaded at any time — a load invalidates the snapshot and the next
+    normalization compiles and atomically publishes a new one while in-flight
+    normalizations finish on the old one (hot reload).
+  - `Normalizer.cs` — the recursive PDAG walker with backtracking, operating
+    on the compiled snapshot.
   - `RulebaseLoader.cs` — the `version=2` rulebase text parser.
   - `Parsers/` — the built-in motif parsers (literal, repeat, dates,
     numbers, network addresses, quoted/delimited strings, JSON, CEF,
     name-value lists, etc).
   - `Annotations.cs` — `annotate=` tag-triggered static fields.
+- `bench/DeltaZulu.Normalize.Benchmarks/` — BenchmarkDotNet hot-path benchmarks;
+  `bench/BASELINE.md` records the measured effect of each optimization phase.
 - `tools/LogNormalizer.Cli/` — a small CLI (`lognormalizer`), analogous to
   the C project's `src/lognormalizer.c`: `-r <rulebase>` to load, then reads
   messages from stdin (or `-m <message>`) and prints one JSON object per line.
