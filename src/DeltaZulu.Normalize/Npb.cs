@@ -9,6 +9,11 @@ internal sealed class Npb
 {
     public required LogNormContext Ctx { get; init; }
 
+    /// <summary>The compiled rulebase snapshot this message is parsed against.
+    /// Carried here so nested walks (custom types, "repeat") reach the same
+    /// snapshot even while the context is being reloaded concurrently.</summary>
+    public required CompiledPdag Snap { get; init; }
+
     /// <summary>The to-be-normalized message.</summary>
     public required string Str { get; init; }
 

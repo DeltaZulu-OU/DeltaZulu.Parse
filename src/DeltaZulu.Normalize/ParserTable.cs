@@ -92,6 +92,59 @@ internal static class ParserTable
         new() { Name = "string", Priority = 32, Construct = StringParser.Construct, Parse = StringParser.Parse },
     };
 
+    /// <summary>
+    /// Hot-path dispatch: a switch over the parser ID compiles to a jump
+    /// table with direct (inlineable) calls, unlike the delegate table above,
+    /// which stays for construct-time lookup and name mapping. The case order
+    /// MUST match <see cref="Parsers"/> exactly; SwitchCoversWholeTable in the
+    /// test suite guards the count.
+    /// </summary>
+    public static int Dispatch(byte prsId, Npb npb, ref int offs, object? pdata, string? parserName,
+        out int parsed, bool wantValue, ref JsonNode? value)
+    {
+        switch (prsId)
+        {
+            case 0: return LiteralParser.Parse(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 1: return RepeatParser.Parse(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 2: return DateTimeParsers.ParseRfc3164(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 3: return DateTimeParsers.ParseRfc5424(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 4: return NumberParsers.ParseNumber(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 5: return NumberParsers.ParseFloat(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 6: return NumberParsers.ParseHexNumber(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 7: return DateTimeParsers.ParseKernelTimestamp(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 8: return CoreParsers.ParseWhitespace(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 9: return NetworkParsers.ParseIPv4(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 10: return NetworkParsers.ParseIPv6(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 11: return CoreParsers.ParseWord(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 12: return CoreParsers.ParseAlpha(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 13: return CoreParsers.ParseRest(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 14: return CoreParsers.ParseOpQuotedString(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 15: return CoreParsers.ParseQuotedString(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 16: return DateTimeParsers.ParseIsoDate(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 17: return DateTimeParsers.ParseTime24hr(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 18: return DateTimeParsers.ParseTime12hr(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 19: return DateTimeParsers.ParseDuration(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 20: return NetworkParsers.ParseCiscoInterfaceSpec(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 21: return StructuredParsers.ParseJson(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 22: return StructuredParsers.ParseCeeSyslog(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 23: return NetworkParsers.ParseMac48(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 24: return StructuredParsers.ParseCef(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 25: return StructuredParsers.ParseV2IpTables(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 26: return StructuredParsers.ParseNameValue(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 27: return StructuredParsers.ParseCheckpointLea(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 28: return CoreParsers.ParseStringTo(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 29: return CoreParsers.ParseCharTo(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 30: return CoreParsers.ParseCharSeparated(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            case 31: return StringParser.Parse(npb, ref offs, pdata, parserName, out parsed, wantValue, ref value);
+            default:
+                parsed = 0;
+                return ErrorCodes.WrongParser;
+        }
+    }
+
+    /// <summary>Number of switch cases in <see cref="Dispatch"/> (test guard).</summary>
+    internal const int DispatchCaseCount = 32;
+
     public static byte NameToId(string name)
     {
         for (int i = 0; i < Parsers.Length; ++i)

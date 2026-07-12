@@ -4,7 +4,8 @@ using System.Text.Json.Nodes;
 namespace DeltaZulu.Normalize;
 
 /// <summary>
-/// The runtime half of pdag.c: the recursive PDAG walker with backtracking.
+/// The runtime half of pdag.c: the recursive PDAG walker with backtracking,
+/// operating on an immutable <see cref="CompiledPdag"/> snapshot.
 ///
 /// At each node the outgoing edges are tried in priority order. When an edge
 /// matches a prefix of the remaining input, the walker recurses into its
@@ -23,6 +24,9 @@ internal static class Normalizer
     private const string RuleMockupKey = "mockup";
     private const string RuleLocationKey = "location";
 
+    /// <summary>No terminal node found (sentinel for the endNode index).</summary>
+    private const int NoNode = -1;
+
     /// <summary>
     /// Skip a parser whose field already exists in the result. Only used by
     /// "repeat" with option.failOnDuplicate (port of checkDuplicate; the C
@@ -38,7 +42,7 @@ internal static class Normalizer
     /// parent; a single-member "..&quot; sub-object is unwrapped so the value
     /// appears directly under this parser's field name.
     /// </summary>
-    private static int FixJson(ref JsonNode? value, JsonObject? json, ParserInstance prs, bool failOnDuplicate)
+    private static int FixJson(ref JsonNode? value, JsonObject? json, in CompiledEdge prs, bool failOnDuplicate)
     {
         try
         {
@@ -108,23 +112,22 @@ internal static class Normalizer
     /// types recursively parse against their own component, accepting a
     /// partial match of the remaining input.
     /// </summary>
-    private static int TryParser(Npb npb, Pdag dag, ref int offs, ref int parsed, ref JsonNode? value,
-        ParserInstance prs, bool failOnDuplicate, JsonObject? curJson, string? parserName)
+    private static int TryParser(Npb npb, ref int offs, ref int parsed, ref JsonNode? value,
+        in CompiledEdge prs, bool failOnDuplicate, JsonObject? curJson, string? parserName)
     {
         int r;
         int parsedToSave = npb.ParsedTo;
 
         if (prs.PrsId == ParserTable.CustomTypeId)
         {
-            if (prs.CustomTypeIndex < 0 || prs.CustomTypeIndex >= npb.Ctx.TypePdags.Count)
+            if (prs.CustomTypeIdx < 0 || prs.CustomTypeIdx >= npb.Snap.TypeRoots.Length)
             {
                 npb.ParsedTo = parsedToSave;
                 return ErrorCodes.WrongParser;
             }
             value ??= new JsonObject();
-            TypePdag custType = npb.Ctx.TypePdags[prs.CustomTypeIndex];
-            Pdag? endNode = null;
-            r = NormalizeRec(npb, custType.Dag, offs, bPartialMatch: true,
+            int endNode = NoNode;
+            r = NormalizeRec(npb, npb.Snap.TypeRoots[prs.CustomTypeIdx], offs, bPartialMatch: true,
                 (JsonObject)value, ref endNode, failOnDuplicate, curJson, parserName);
             parsed = npb.ParsedTo - offs;
             if (r != 0)
@@ -132,7 +135,7 @@ internal static class Normalizer
         }
         else
         {
-            r = ParserTable.Parsers[prs.PrsId].Parse(npb, ref offs, prs.ParserData, parserName,
+            r = ParserTable.Dispatch(prs.PrsId, npb, ref offs, prs.Data, parserName,
                 out parsed, wantValue: prs.Name != null, ref value);
         }
 
@@ -141,10 +144,10 @@ internal static class Normalizer
     }
 
     /// <summary>Record the segment for the matching-rule mock-up (deepest-first, reversed at emit).</summary>
-    private static void AddRuleToMockup(Npb npb, ParserInstance prs)
+    private static void AddRuleToMockup(Npb npb, in CompiledEdge prs)
     {
         string segment = prs.PrsId == ParserTable.LiteralId
-            ? Parsers.LiteralParser.DataForDisplay(prs.ParserData!)
+            ? Parsers.LiteralParser.DataForDisplay(prs.Data!)
             : $"%{prs.Name ?? "-"}:{ParserTable.IdToName(prs.PrsId)}%";
         npb.RuleSegments!.Add(segment);
     }
@@ -152,54 +155,69 @@ internal static class Normalizer
     /// <summary>
     /// Recursive step of the normalizer (port of ln_normalizeRec).
     /// </summary>
-    /// <param name="npb">normalization parameter block</param>
-    /// <param name="dag">current PDAG node</param>
+    /// <param name="npb">normalization parameter block (message, state, snapshot)</param>
+    /// <param name="nodeIdx">current PDAG node index</param>
     /// <param name="offs">position in the input where matching continues</param>
     /// <param name="bPartialMatch">succeed on a terminal node even before end-of-input</param>
     /// <param name="json">result object values are committed to (null discards them)</param>
-    /// <param name="endNode">receives the terminal node when a match is found</param>
+    /// <param name="endNode">receives the terminal node's index when a match is found</param>
     /// <param name="failOnDuplicate">skip parsers whose field already exists (repeat option)</param>
     /// <param name="curJson">object checked for duplicates</param>
     /// <param name="parserName">name of the enclosing parser instance (repeat merge)</param>
-    public static int NormalizeRec(Npb npb, Pdag dag, int offs, bool bPartialMatch,
-        JsonObject? json, ref Pdag? endNode, bool failOnDuplicate, JsonObject? curJson, string? parserName)
+    public static int NormalizeRec(Npb npb, int nodeIdx, int offs, bool bPartialMatch,
+        JsonObject? json, ref int endNode, bool failOnDuplicate, JsonObject? curJson, string? parserName)
     {
+        CompiledPdag snap = npb.Snap;
+        CompiledNode node = snap.Nodes[nodeIdx];
         int r = ErrorCodes.WrongParser;
         int parsedTo = npb.ParsedTo;
         int parsed = 0;
         JsonNode? value = null;
 
-        dag.StatsCalled++;
+        if (snap.StatsCalled is { } statsCalled)
+            statsCalled[nodeIdx]++;
 
-        for (int iprs = 0; iprs < dag.Parsers.Count && r != 0; ++iprs)
+        int edgeEnd = node.EdgeStart + node.EdgeCount;
+        for (int iprs = node.EdgeStart; iprs < edgeEnd && r != 0; ++iprs)
         {
-            ParserInstance prs = dag.Parsers[iprs];
+            ref readonly CompiledEdge prs = ref snap.Edges[iprs];
+
+            /* a literal whose first char mismatches can be rejected without a
+             * call; equivalent to a failed parse, which records no progress
+             * (LongestParsedTo >= offs is already guaranteed by the caller) */
+            if (prs.LiteralFirstChar != '\0'
+                && prs.PrsId == ParserTable.LiteralId
+                && npb.At(offs) != prs.LiteralFirstChar)
+            {
+                continue;
+            }
+
             if (failOnDuplicate && CheckDuplicate(curJson, prs.Name))
                 continue;
 
             int i = offs;
             int attemptParsedTo = offs;
-            int localR = TryParser(npb, dag, ref i, ref parsed, ref value, prs, failOnDuplicate, json, prs.Name);
+            int localR = TryParser(npb, ref i, ref parsed, ref value, in prs, failOnDuplicate, json, prs.Name);
             if (localR == 0)
             {
                 parsedTo = i + parsed;
                 attemptParsedTo = parsedTo;
                 /* potential hit, need to verify by walking the subtree */
-                r = NormalizeRec(npb, prs.Node, parsedTo, bPartialMatch, json, ref endNode,
+                r = NormalizeRec(npb, prs.TargetNode, parsedTo, bPartialMatch, json, ref endNode,
                     failOnDuplicate, curJson, parserName);
                 if (r == 0)
                 {
-                    int rFix = FixJson(ref value, json, prs, failOnDuplicate);
+                    int rFix = FixJson(ref value, json, in prs, failOnDuplicate);
                     if (rFix != 0)
                         return rFix;
                     if ((npb.Ctx.Options & LogNormOptions.AddRule) != 0)
-                        AddRuleToMockup(npb, prs);
+                        AddRuleToMockup(npb, in prs);
                     if (parsedTo > npb.ParsedTo)
                         npb.ParsedTo = parsedTo;
                 }
-                else
+                else if (snap.StatsBacktracked is { } statsBacktracked)
                 {
-                    dag.StatsBacktracked++;
+                    statsBacktracked[nodeIdx]++;
                 }
             }
             value = null; /* discard any uncommitted extraction */
@@ -213,9 +231,9 @@ internal static class Normalizer
          * the terminal is the fallback when no child path matched. Still
          * update ParsedTo here: custom-type parsers compute their consumed
          * length from this value after their nested NormalizeRec call. */
-        if (r != 0 && dag.IsTerminal && (offs == npb.StrLen || bPartialMatch))
+        if (r != 0 && node.IsTerminal && (offs == npb.StrLen || bPartialMatch))
         {
-            endNode = dag;
+            endNode = nodeIdx;
             if (offs > npb.ParsedTo)
                 npb.ParsedTo = offs;
             if (offs > npb.LongestParsedTo)
@@ -225,7 +243,7 @@ internal static class Normalizer
         return r;
     }
 
-    private static void AddRuleMetadata(Npb npb, JsonObject json, Pdag endNode)
+    private static void AddRuleMetadata(Npb npb, JsonObject json, TerminalInfo endNode)
     {
         LogNormContext ctx = npb.Ctx;
         JsonObject? metaRule = null;
@@ -261,29 +279,30 @@ internal static class Normalizer
         json[UnparsedDataKey] = str[Math.Min(offs, str.Length)..];
     }
 
-    /// <summary>Normalize a message (port of ln_normalize).</summary>
-    public static int Normalize(LogNormContext ctx, string str, out JsonObject result)
+    /// <summary>Normalize a message against a snapshot (port of ln_normalize).</summary>
+    public static int Normalize(LogNormContext ctx, CompiledPdag snap, string str, out JsonObject result)
     {
-        var npb = new Npb { Ctx = ctx, Str = str };
+        var npb = new Npb { Ctx = ctx, Snap = snap, Str = str };
         if ((ctx.Options & LogNormOptions.AddRule) != 0)
             npb.RuleSegments = new List<string>();
 
         result = new JsonObject();
-        Pdag? endNode = null;
-        int r = NormalizeRec(npb, ctx.Root, 0, bPartialMatch: false, result, ref endNode,
+        int endNode = NoNode;
+        int r = NormalizeRec(npb, snap.RootNode, 0, bPartialMatch: false, result, ref endNode,
             failOnDuplicate: false, curJson: null, parserName: null);
 
-        if (r == 0 && endNode!.IsTerminal)
+        if (r == 0 && snap.Nodes[endNode].IsTerminal)
         {
             /* success, finalize the event */
-            if (endNode.Tags != null)
+            TerminalInfo term = snap.Terminals[snap.Nodes[endNode].TerminalIdx];
+            if (term.Tags != null)
             {
-                result["event.tags"] = endNode.Tags.DeepClone();
-                ctx.Annotations.Annotate(result, endNode.Tags);
+                result["event.tags"] = term.Tags.DeepClone();
+                ctx.Annotations.Annotate(result, term.Tags);
             }
             if ((ctx.Options & LogNormOptions.AddOriginalMessage) != 0)
                 result[OriginalMsgKey] = str;
-            AddRuleMetadata(npb, result, endNode);
+            AddRuleMetadata(npb, result, term);
         }
         else
         {

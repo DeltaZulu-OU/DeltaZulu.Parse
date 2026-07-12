@@ -27,17 +27,57 @@ public class LogNormContextTests
     }
 
     [TestMethod]
-    public void LoadSamplesFromString_AfterNormalize_IsRejected()
+    public void LoadSamplesFromString_AfterNormalize_HotReloads()
     {
-        var errors = new List<string>();
-        var ctx = new LogNormContext { ErrorCallback = errors.Add };
+        /* loading after first use recompiles the snapshot: old rules keep
+         * matching (incl. the shared "ab" literal prefix, which must merge
+         * with the earlier rule's path, not with its compacted form) and the
+         * new rule becomes visible */
+        var ctx = new LogNormContext();
         Assert.AreEqual(0, ctx.LoadSamplesFromString("rule=:abc %f:rest%"));
-        Assert.AreEqual(0, ctx.Normalize("abc hello", out JsonObject _));
+        Assert.AreEqual(0, ctx.Normalize("abc hello", out JsonObject j1));
+        Assert.AreEqual("hello", j1["f"]!.GetValue<string>());
 
-        int r = ctx.LoadSamplesFromString("rule=:abd %f:rest%");
+        Assert.AreEqual(0, ctx.LoadSamplesFromString("rule=:abd %f:rest%"));
 
-        Assert.AreEqual(ErrorCodes.BadConfig, r);
-        Assert.IsTrue(errors.Any(e => e.Contains("cannot be loaded after", StringComparison.Ordinal)));
+        Assert.AreEqual(0, ctx.Normalize("abd world", out JsonObject j2));
+        Assert.AreEqual("world", j2["f"]!.GetValue<string>());
+        Assert.AreEqual(0, ctx.Normalize("abc again", out JsonObject j3));
+        Assert.AreEqual("again", j3["f"]!.GetValue<string>());
+    }
+
+    [TestMethod]
+    public void HotReload_ConcurrentWithNormalization_IsSafe()
+    {
+        var ctx = new LogNormContext();
+        Assert.AreEqual(0, ctx.LoadSamplesFromString("rule=:msg 0 %f:rest%"));
+
+        using var stop = new CancellationTokenSource();
+        var failures = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        Task[] readers = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                /* the initial rule must keep matching across every reload */
+                if (ctx.Normalize("msg 0 payload", out JsonObject j) != 0
+                    || j["f"]?.GetValue<string>() != "payload")
+                {
+                    failures.Enqueue($"unexpected result: {j.ToJsonString()}");
+                    return;
+                }
+            }
+        })).ToArray();
+
+        for (int i = 1; i <= 50; i++)
+            Assert.AreEqual(0, ctx.LoadSamplesFromString($"rule=:msg {i} %f:rest%"));
+        stop.Cancel();
+        Task.WaitAll(readers, TimeSpan.FromSeconds(30));
+
+        Assert.AreEqual(0, failures.Count, string.Join("\n", failures));
+
+        /* every loaded rule is visible afterwards */
+        Assert.AreEqual(0, ctx.Normalize("msg 50 done", out JsonObject last));
+        Assert.AreEqual("done", last["f"]!.GetValue<string>());
     }
 
     [TestMethod]

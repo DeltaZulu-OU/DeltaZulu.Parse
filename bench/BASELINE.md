@@ -40,3 +40,24 @@ Observations:
 - Allocations are significant everywhere — including **NoMatch** scenarios (496–664 B for
   messages that produce no fields), confirming eager value materialization on backtracked
   paths.
+
+## Phase 2 — compiled PDAG snapshot (flat struct arrays, switch dispatch, literal first-char pre-filter, opt-in stats)
+
+| Method                | Mean       | vs baseline | Allocated |
+|---------------------- |-----------:|------------:|----------:|
+| MatchFast             |   436.8 ns |       −29 % |     614 B |
+| MatchBacktrack        |   476.1 ns |       −27 % |     712 B |
+| NoMatchTrie           |   215.2 ns |       −36 % |     504 B |
+| NoMatchBacktrack      |   317.5 ns |       −35 % |     672 B |
+| Structured            | 1,832.3 ns |        −7 % |   2,980 B |
+| ConcurrentNormalize   |   129.9 ns |      −80 %  |     615 B |
+| SingleThreadNormalize |   429.1 ns |       −30 % |     614 B |
+
+Observations:
+
+- **Concurrency now scales**: 4 cores deliver ~3.3× the single-thread throughput
+  (129.9 vs 429.1 ns/op); the read-only snapshot removed the shared-write ceiling.
+- All single-thread scenarios improved 27–36 % from the contiguous edge array, jump-table
+  dispatch and the literal first-char filter. Structured moved least (its cost is inside
+  the big motif parsers, not the walker).
+- Allocations unchanged, as expected — that is Phase 3's target.

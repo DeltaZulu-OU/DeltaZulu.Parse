@@ -70,6 +70,29 @@ public class CorrectnessFixTests
     }
 
     [TestMethod]
+    public void Dispatch_SwitchCoversWholeParserTable()
+    {
+        /* the hot-path dispatch switch must have one case per table entry;
+         * this catches a parser added to the table but not to the switch */
+        Assert.AreEqual(ParserTable.Parsers.Length, ParserTable.DispatchCaseCount,
+            "ParserTable.Dispatch is out of sync with ParserTable.Parsers");
+    }
+
+    [TestMethod]
+    public void Stats_CollectedOnlyWhenOptionSet()
+    {
+        var ctx = new LogNormContext();
+        Assert.AreEqual(0, ctx.LoadSamplesFromString("rule=:a %f:word%"));
+        ctx.Normalize("a hello", out _);
+        Assert.AreEqual((0L, 0L), ctx.GetStats(), "stats must stay off by default");
+
+        var statsCtx = new LogNormContext { Options = LogNormOptions.CollectStats };
+        Assert.AreEqual(0, statsCtx.LoadSamplesFromString("rule=:a %f:word%"));
+        Assert.AreEqual(0, statsCtx.Normalize("a hello", out _));
+        Assert.IsTrue(statsCtx.GetStats().NodesVisited > 0, "stats must accumulate when enabled");
+    }
+
+    [TestMethod]
     [Timeout(10_000)]
     public void Build_DeeplyNestedAlternatives_CompletesQuickly()
     {

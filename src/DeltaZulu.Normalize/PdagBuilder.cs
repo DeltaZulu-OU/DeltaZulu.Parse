@@ -1,20 +1,19 @@
-using System.Text;
 using System.Text.Json.Nodes;
-using DeltaZulu.Normalize.Parsers;
 
 namespace DeltaZulu.Normalize;
 
 /// <summary>
-/// PDAG construction and optimization (port of the build-time half of pdag.c).
+/// PDAG construction (port of the build-time half of pdag.c).
 ///
-/// Build phase: each rule is split into motifs; every motif adds an edge (and
-/// destination node) to the DAG unless an identical edge already exists, in
+/// Each rule is split into motifs; every motif adds an edge (and destination
+/// node) to the builder graph unless an identical edge already exists, in
 /// which case the existing path is walked ("merged"). Literal text is
 /// expanded into one single-character literal edge per char.
 ///
-/// Optimization phase (run once after loading): the outgoing edges of every
-/// node are sorted into priority order and runs of mergeable single-char
-/// literal edges are compacted into multi-char literal edges.
+/// The optimization passes pdag.c applies in place (priority sort, literal
+/// path compaction) run during snapshot compilation instead — see
+/// <see cref="PdagCompiler"/> — so this graph stays append-only and further
+/// rulebases can be loaded at any time (hot reload).
 /// </summary>
 internal static class PdagBuilder
 {
@@ -243,197 +242,5 @@ internal static class PdagBuilder
     {
         Pdag? nextnode = null;
         return AddParserInternal(ctx, ref pdag, ModeSeq, prscnf, ref nextnode);
-    }
-
-    /* ---------- optimization ---------- */
-
-    /// <summary>
-    /// Literal path compaction: merge chains of single-char literal edges
-    /// into one multi-char literal edge. A literal edge is only mergeable
-    /// with its successor when it extracts no field, does not terminate a
-    /// rule, and the intermediate node is not shared (RefCount == 1) and has
-    /// exactly one (literal) outgoing edge.
-    /// </summary>
-    private static void CompactLiteralPath(ParserInstance prs)
-    {
-        while (true)
-        {
-            if (!(prs.PrsId == ParserTable.LiteralId
-                  && prs.Name == null
-                  && !prs.Node.IsTerminal
-                  && prs.Node.RefCount == 1
-                  && prs.Node.Parsers.Count == 1
-                  && prs.Node.Parsers[0].PrsId == ParserTable.LiteralId
-                  && prs.Node.Parsers[0].Name == null
-                  && prs.Node.Parsers[0].Node.RefCount == 1))
-            {
-                return;
-            }
-
-            ParserInstance childPrs = prs.Node.Parsers[0];
-            LiteralParser.CombineData(prs.ParserData!, childPrs.ParserData!);
-            prs.Node = childPrs.Node;
-        }
-    }
-
-    private static void OptimizeComponent(Pdag dag, HashSet<Pdag> visited)
-    {
-        /* shared nodes (prefix merging, "alternative" re-joins) are reachable
-         * via many paths; without this check the walk re-visits them once per
-         * path, which is exponential in nested-diamond depth */
-        if (!visited.Add(dag))
-            return;
-
-        if (dag.Parsers.Count > 1)
-        {
-            /* stable sort keeps rule-definition order for equal priorities */
-            var sorted = dag.Parsers.OrderBy(p => p.Priority).ToList();
-            dag.Parsers.Clear();
-            dag.Parsers.AddRange(sorted);
-        }
-
-        foreach (ParserInstance prs in dag.Parsers)
-        {
-            CompactLiteralPath(prs);
-            OptimizeComponent(prs.Node, visited);
-        }
-    }
-
-    private static void DeleteComponentIds(Pdag dag, HashSet<Pdag>? visited = null)
-    {
-        if (visited != null && !visited.Add(dag))
-            return;
-        dag.RulebaseId = null;
-        foreach (ParserInstance prs in dag.Parsers)
-            DeleteComponentIds(prs.Node, visited);
-    }
-
-    /// <summary>
-    /// Merge an already-present component ID with a newly generated one. This
-    /// happens when the "alternative" parser makes a node reachable via
-    /// multiple textual paths; the result is a best-effort "[a|b]" display.
-    /// </summary>
-    private static void FixComponentId(Pdag dag, string newId)
-    {
-        string curr = dag.RulebaseId!;
-        int i = 0;
-        int len = Math.Min(curr.Length, newId.Length);
-        while (i < len && curr[i] == newId[i])
-            ++i;
-        if (i >= 1 && curr[i - 1] == '%')
-            --i;
-        string updated = $"{curr[..i]}[{curr[i..]}|{newId[i..]}]";
-        DeleteComponentIds(dag);
-        dag.RulebaseId = updated;
-    }
-
-    /// <summary>Assign human-readable node identifiers (used by stats/DOT output).</summary>
-    private static void SetComponentIds(Pdag dag, string? prefix)
-    {
-        if (prefix == null)
-            return;
-        if (dag.RulebaseId == null)
-        {
-            dag.RulebaseId = prefix;
-        }
-        else
-        {
-            FixComponentId(dag, prefix);
-            prefix = dag.RulebaseId;
-        }
-        foreach (ParserInstance prs in dag.Parsers)
-        {
-            string id;
-            if (prs.PrsId == ParserTable.LiteralId)
-            {
-                string lit = LiteralParser.DataForDisplay(prs.ParserData!);
-                id = prs.Name == null
-                    ? prefix + lit
-                    : $"{prefix}%{prs.Name}:{ParserTable.IdToName(prs.PrsId)}:{lit}%";
-            }
-            else
-            {
-                id = $"{prefix}%{prs.Name ?? "-"}:{ParserTable.IdToName(prs.PrsId)}%";
-            }
-            SetComponentIds(prs.Node, id);
-        }
-    }
-
-    /// <summary>Optimize the full PDAG, i.e. all components (port of ln_pdagOptimize).
-    /// Component IDs (a display aid for stats/DOT) are assigned separately by
-    /// <see cref="AssignComponentIds"/> — their merge step intentionally
-    /// re-visits shared nodes and must not run on the normalize path.</summary>
-    public static void Optimize(LogNormContext ctx)
-    {
-        var visited = new HashSet<Pdag>();
-        foreach (TypePdag t in ctx.TypePdags)
-            OptimizeComponent(t.Dag, visited);
-        OptimizeComponent(ctx.Root, visited);
-    }
-
-    /// <summary>Assign human-readable node IDs on demand (DOT/stats display).
-    /// Clears any previous assignment first: SetComponentIds merges IDs when it
-    /// re-reaches a node, so re-running it over existing IDs would corrupt them.</summary>
-    public static void AssignComponentIds(LogNormContext ctx)
-    {
-        var cleared = new HashSet<Pdag>();
-        foreach (TypePdag t in ctx.TypePdags)
-            DeleteComponentIds(t.Dag, cleared);
-        DeleteComponentIds(ctx.Root, cleared);
-
-        foreach (TypePdag t in ctx.TypePdags)
-            SetComponentIds(t.Dag, "");
-        SetComponentIds(ctx.Root, "");
-    }
-
-    /* ---------- DOT graph generation (debug aid) ---------- */
-
-    public static string GenerateDot(LogNormContext ctx)
-    {
-        AssignComponentIds(ctx);
-        var sb = new StringBuilder();
-        var ids = new Dictionary<Pdag, int>();
-        var visited = new HashSet<Pdag>();
-        sb.Append("digraph pdag {\n");
-        GenerateDotRec(ctx.Root, sb, ids, visited);
-        sb.Append("}\n");
-        return sb.ToString();
-    }
-
-    private static int DotId(Pdag dag, Dictionary<Pdag, int> ids)
-    {
-        if (!ids.TryGetValue(dag, out int id))
-        {
-            id = ids.Count;
-            ids[dag] = id;
-        }
-        return id;
-    }
-
-    private static void GenerateDotRec(Pdag dag, StringBuilder sb, Dictionary<Pdag, int> ids, HashSet<Pdag> visited)
-    {
-        int id = DotId(dag, ids);
-        if (!visited.Add(dag))
-            return;
-        sb.Append($"l{id} [ label=\"{dag.RefCount}\"");
-        if (dag.IsTerminal)
-            sb.Append(" style=\"bold\"");
-        sb.Append("]\n");
-        foreach (ParserInstance prs in dag.Parsers)
-        {
-            sb.Append($"l{id} -> l{DotId(prs.Node, ids)} [label=\"");
-            sb.Append(ParserTable.IdToName(prs.PrsId));
-            sb.Append(':');
-            if (prs.PrsId == ParserTable.LiteralId)
-            {
-                foreach (char c in LiteralParser.DataForDisplay(prs.ParserData!))
-                {
-                    if (c != '\\' && c != '"')
-                        sb.Append(c);
-                }
-            }
-            sb.Append("\" style=\"dotted\"]\n");
-            GenerateDotRec(prs.Node, sb, ids, visited);
-        }
     }
 }

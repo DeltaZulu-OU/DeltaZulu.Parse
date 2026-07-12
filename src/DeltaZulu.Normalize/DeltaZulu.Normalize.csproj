@@ -12,4 +12,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DeltaZulu.Normalize.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -16,4 +16,13 @@ public enum LogNormOptions : uint
 
     /// <summary>Add the matching rule's location (file, line number) to the metadata.</summary>
     AddRuleLocation = 0x10,
+
+    /// <summary>
+    /// Maintain per-node usage counters during normalization (see
+    /// <see cref="LogNormContext.GetStats"/>). Off by default: the counters
+    /// write to memory shared by all concurrent Normalize calls, which costs
+    /// multithreaded throughput. Not a C library flag (the C engine always
+    /// counts); the high bit avoids collision with future LN_CTXOPT_* values.
+    /// </summary>
+    CollectStats = 0x8000_0000,
 }

@@ -31,21 +31,12 @@ public sealed class Pdag
     /// <summary>Tags assigned to messages that match a rule ending here.</summary>
     internal JsonArray? Tags { get; set; }
 
-    /// <summary>Number of edges pointing at this node (needed by the literal-path optimizer).</summary>
+    /// <summary>Number of edges pointing at this node (needed by the compiler's literal-path compaction).</summary>
     internal int RefCount = 1;
-
-    /// <summary>Human-readable rulebase identifier of this node (set during optimization).</summary>
-    public string? RulebaseId { get; internal set; }
 
     /// <summary>Rulebase file that defined the rule terminating here (for rule-location metadata).</summary>
     internal string? RulebaseFile;
     internal int RulebaseLineNumber;
-
-    /// <summary>Usage statistics, maintained during normalization.</summary>
-    public int StatsCalled { get; internal set; }
-    public int StatsBacktracked { get; internal set; }
-
-    internal bool IsLeaf => Parsers.Count == 0;
 }
 
 /// <summary>

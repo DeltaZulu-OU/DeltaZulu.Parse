@@ -11,10 +11,22 @@ namespace DeltaZulu.Normalize.Parsers;
 /// </summary>
 internal static class RepeatParser
 {
+    /// <summary>Construct-time data: builder sub-graphs, compiled into the
+    /// snapshot arena (as <see cref="CompiledData"/>) by the PDAG compiler.</summary>
     internal sealed class Data
     {
         public required Pdag Parser { get; init; }
         public required Pdag WhileCond { get; init; }
+        public bool PermitMismatchInParser;
+        public bool FailOnDuplicate;
+    }
+
+    /// <summary>Runtime data: root node indices of the two sub-components
+    /// within the snapshot carried by the npb.</summary>
+    internal sealed class CompiledData
+    {
+        public required int ParserRoot { get; init; }
+        public required int WhileRoot { get; init; }
         public bool PermitMismatchInParser;
         public bool FailOnDuplicate;
     }
@@ -116,7 +128,7 @@ internal static class RepeatParser
         out int parsed, bool wantValue, ref JsonNode? value)
     {
         parsed = 0;
-        var data = (Data)pdata!;
+        var data = (CompiledData)pdata!;
         int strtoffs = offs;
         int lastMatch = strtoffs;
         int lastKnownGood = strtoffs;
@@ -131,8 +143,8 @@ internal static class RepeatParser
         {
             int roundStart = strtoffs;
             parsedValue ??= new JsonObject();
-            Pdag? endNode = null;
-            r = Normalizer.NormalizeRec(npb, data.Parser, strtoffs, bPartialMatch: true,
+            int endNode = -1;
+            r = Normalizer.NormalizeRec(npb, data.ParserRoot, strtoffs, bPartialMatch: true,
                 parsedValue, ref endNode, data.FailOnDuplicate, parsedValue, parserName);
             strtoffs = npb.ParsedTo;
 
@@ -166,8 +178,8 @@ internal static class RepeatParser
             npb.ParsedTo = 0;
             lastMatch = lastKnownGood;
             lastKnownGood = strtoffs; /* record position in case the while-check fails */
-            endNode = null;
-            r = Normalizer.NormalizeRec(npb, data.WhileCond, strtoffs, bPartialMatch: true,
+            endNode = -1;
+            r = Normalizer.NormalizeRec(npb, data.WhileRoot, strtoffs, bPartialMatch: true,
                 null, ref endNode, failOnDuplicate: false, curJson: null, parserName);
             if (r == 0)
                 strtoffs = npb.ParsedTo;
