@@ -1,0 +1,128 @@
+using BenchmarkDotNet.Attributes;
+
+namespace DeltaZulu.Normalize.Benchmarks;
+
+/// <summary>
+/// Hot-path benchmarks. Contexts are built once in GlobalSetup; the benchmark
+/// bodies only call Normalize. Iterating over a small message set per invoke
+/// keeps the branch predictor honest; time is reported per single Normalize
+/// call via OperationsPerInvoke.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(warmupCount: 3, iterationCount: 10)]
+public class NormalizationBenchmarks
+{
+    private LogNormContext _trieCtx = null!;
+    private LogNormContext _backtrackCtx = null!;
+    private LogNormContext _structuredCtx = null!;
+
+    private string[] _trieMatch = null!;
+    private string[] _trieNoMatch = null!;
+    private string[] _backtrackMatch = null!;
+    private string[] _backtrackNoMatch = null!;
+    private string[] _structuredMatch = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _trieCtx = Load(BenchmarkRulebases.TrieHeavy(200, out _trieMatch, out _trieNoMatch));
+        _backtrackCtx = Load(BenchmarkRulebases.BacktrackHeavy(out _backtrackMatch, out _backtrackNoMatch));
+        _structuredCtx = Load(BenchmarkRulebases.Structured(out _structuredMatch));
+
+        /* warm/compile each context outside measurement, and verify the
+         * corpus does what its name claims — a benchmark on silently
+         * non-matching messages would measure the wrong scenario */
+        AssertAll(_trieCtx, _trieMatch, shouldMatch: true);
+        AssertAll(_trieCtx, _trieNoMatch, shouldMatch: false);
+        AssertAll(_backtrackCtx, _backtrackMatch, shouldMatch: true);
+        AssertAll(_backtrackCtx, _backtrackNoMatch, shouldMatch: false);
+        AssertAll(_structuredCtx, _structuredMatch, shouldMatch: true);
+    }
+
+    private static void AssertAll(LogNormContext ctx, string[] messages, bool shouldMatch)
+    {
+        foreach (string msg in messages)
+        {
+            bool matched = ctx.Normalize(msg, out _) == 0;
+            if (matched != shouldMatch)
+                throw new InvalidOperationException(
+                    $"corpus error: '{msg}' {(matched ? "matched" : "did not match")} but should{(shouldMatch ? "" : " not")}");
+        }
+    }
+
+    private static LogNormContext Load(string rulebase)
+    {
+        var ctx = new LogNormContext();
+        ctx.ErrorCallback = msg => throw new InvalidOperationException($"rulebase error: {msg}");
+        if (ctx.LoadSamplesFromString(rulebase) != 0)
+            throw new InvalidOperationException("rulebase load failed");
+        return ctx;
+    }
+
+    private static int RunAll(LogNormContext ctx, string[] messages)
+    {
+        int r = 0;
+        foreach (string msg in messages)
+            r += ctx.Normalize(msg, out _);
+        return r;
+    }
+
+    [Benchmark(OperationsPerInvoke = 29)] /* 29 matching messages generated for 200 rules */
+    public int MatchFast() => RunAll(_trieCtx, _trieMatch);
+
+    [Benchmark(OperationsPerInvoke = 3)]
+    public int MatchBacktrack() => RunAll(_backtrackCtx, _backtrackMatch);
+
+    [Benchmark(OperationsPerInvoke = 3)]
+    public int NoMatchTrie() => RunAll(_trieCtx, _trieNoMatch);
+
+    [Benchmark(OperationsPerInvoke = 3)]
+    public int NoMatchBacktrack() => RunAll(_backtrackCtx, _backtrackNoMatch);
+
+    [Benchmark(OperationsPerInvoke = 4)]
+    public int Structured() => RunAll(_structuredCtx, _structuredMatch);
+}
+
+/// <summary>
+/// Multithreaded throughput on one shared context: exposes the per-node
+/// statistics counters' cache-line contention (shared writes on every node
+/// visit). OperationsPerInvoke = messages per invocation so the score is
+/// per-Normalize-call.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(warmupCount: 3, iterationCount: 10)]
+public class ConcurrentBenchmarks
+{
+    private const int MessagesPerInvoke = 2000;
+
+    private LogNormContext _ctx = null!;
+    private string[] _messages = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var ctx = new LogNormContext();
+        ctx.ErrorCallback = msg => throw new InvalidOperationException($"rulebase error: {msg}");
+        string rb = BenchmarkRulebases.TrieHeavy(200, out string[] match, out _);
+        if (ctx.LoadSamplesFromString(rb) != 0)
+            throw new InvalidOperationException("rulebase load failed");
+        _ctx = ctx;
+        _messages = new string[MessagesPerInvoke];
+        for (int i = 0; i < MessagesPerInvoke; i++)
+            _messages[i] = match[i % match.Length];
+        _ctx.Normalize(_messages[0], out _);
+    }
+
+    [Benchmark(OperationsPerInvoke = MessagesPerInvoke)]
+    public void ConcurrentNormalize()
+    {
+        Parallel.For(0, MessagesPerInvoke, i => _ctx.Normalize(_messages[i], out _));
+    }
+
+    [Benchmark(OperationsPerInvoke = MessagesPerInvoke)]
+    public void SingleThreadNormalize()
+    {
+        for (int i = 0; i < MessagesPerInvoke; i++)
+            _ctx.Normalize(_messages[i], out _);
+    }
+}

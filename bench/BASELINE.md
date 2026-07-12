@@ -1,0 +1,42 @@
+# Benchmark results
+
+Run with:
+
+```shell
+dotnet run -c Release --project bench/DeltaZulu.Normalize.Benchmarks -- --filter '*'
+```
+
+Environment for all tables: Ubuntu 24.04, Intel Xeon 2.80GHz (4 physical cores),
+.NET 10.0.9 (RyuJIT AVX-512), BenchmarkDotNet 0.14.0, IterationCount=10 WarmupCount=3.
+Times and allocations are per single `Normalize` call.
+
+Scenarios:
+
+- **MatchFast** — 200-rule trie-heavy rulebase (shared literal prefixes), matching messages.
+- **MatchBacktrack** — rules sharing a greedy `%word% %word%` prefix, distinct literal
+  tails; messages match the last tail (maximal sibling exploration).
+- **NoMatchTrie / NoMatchBacktrack** — messages that match nothing (full exploration).
+- **Structured** — `json`, `cef`, `name-value-list`, `repeat` motifs.
+- **ConcurrentNormalize** — 2000 messages via `Parallel.For` on one shared context,
+  vs. **SingleThreadNormalize** for the same work on one thread.
+
+## Baseline (commit: Phase 0, pre-optimization)
+
+| Method                | Mean       | Gen0   | Allocated |
+|---------------------- |-----------:|-------:|----------:|
+| MatchFast             |   615.2 ns | 0.0579 |     606 B |
+| MatchBacktrack        |   653.1 ns | 0.0674 |     704 B |
+| NoMatchTrie           |   337.4 ns | 0.0477 |     496 B |
+| NoMatchBacktrack      |   485.3 ns | 0.0642 |     664 B |
+| Structured            | 1,977.0 ns | 0.2861 |   2,972 B |
+| ConcurrentNormalize   |   664.4 ns | 0.0596 |     607 B |
+| SingleThreadNormalize |   610.4 ns | 0.0586 |     606 B |
+
+Observations:
+
+- **Concurrency does not scale**: 4 cores are *slower per message* than 1 thread.
+  Consistent with the shared per-node stats writes (`StatsCalled++`) causing cache-line
+  ping-pong on every node visit (plus `Parallel.For` overhead at this small per-op cost).
+- Allocations are significant everywhere — including **NoMatch** scenarios (496–664 B for
+  messages that produce no fields), confirming eager value materialization on backtracked
+  paths.
