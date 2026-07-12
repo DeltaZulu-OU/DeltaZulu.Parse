@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
@@ -338,32 +339,40 @@ internal static class StringParser
     /// </summary>
     private static string Unescape(string cstr, Data data)
     {
-        var sb = new System.Text.StringBuilder(cstr.Length);
-        int j = 0;
-        while (j < cstr.Length)
+        char[] buffer = ArrayPool<char>.Shared.Rent(cstr.Length);
+        try
         {
-            bool isDoubledQuote = cstr[j] == data.QCharEnd && j + 1 < cstr.Length && cstr[j + 1] == data.QCharEnd
-                && (data.EscMd == EscMode.Double || data.EscMd == EscMode.Both);
-            bool isBackslashLeader = cstr[j] == '\\' && (data.EscMd == EscMode.Backslash || data.EscMd == EscMode.Both);
-
-            if (isDoubledQuote || isBackslashLeader)
+            int outLen = 0;
+            int j = 0;
+            while (j < cstr.Length)
             {
-                if (j + 1 < cstr.Length)
+                bool isDoubledQuote = cstr[j] == data.QCharEnd && j + 1 < cstr.Length && cstr[j + 1] == data.QCharEnd
+                    && (data.EscMd == EscMode.Double || data.EscMd == EscMode.Both);
+                bool isBackslashLeader = cstr[j] == '\\' && (data.EscMd == EscMode.Backslash || data.EscMd == EscMode.Both);
+
+                if (isDoubledQuote || isBackslashLeader)
                 {
-                    sb.Append(cstr[j + 1]);
-                    j += 2;
+                    if (j + 1 < cstr.Length)
+                    {
+                        buffer[outLen++] = cstr[j + 1];
+                        j += 2;
+                    }
+                    else
+                    {
+                        j += 1; /* trailing lone escape char; nothing follows to keep */
+                    }
                 }
                 else
                 {
-                    j += 1; /* trailing lone escape char; nothing follows to keep */
+                    buffer[outLen++] = cstr[j];
+                    j += 1;
                 }
             }
-            else
-            {
-                sb.Append(cstr[j]);
-                j += 1;
-            }
+            return new string(buffer, 0, outLen);
         }
-        return sb.ToString();
+        finally
+        {
+            ArrayPool<char>.Shared.Return(buffer);
+        }
     }
 }
