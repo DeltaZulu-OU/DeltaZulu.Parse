@@ -20,7 +20,7 @@ for (int i = 0; i < args.Length; i++)
         case "-r":
             if (i + 1 >= args.Length)
             {
-                Console.Error.WriteLine("error: -r requires a rulebase file argument");
+                Console.Error.WriteLine("error: -r requires a rulebase file or directory argument");
                 PrintUsage();
                 return 1;
             }
@@ -57,7 +57,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (rulebasePath == null)
 {
-    Console.Error.WriteLine("error: -r <rulebase-file> is required");
+    Console.Error.WriteLine("error: -r <rulebase-file-or-dir> is required");
     PrintUsage();
     return 1;
 }
@@ -100,9 +100,11 @@ static void NormalizeAndPrint(LogNormContext ctx, string message, bool includeEv
 static void PrintUsage()
 {
     Console.Error.WriteLine("""
-        usage: lognormalizer -r <rulebase-file> [-m <message>] [-O] [--add-rule] [-T]
+        usage: lognormalizer -r <rulebase-file-or-dir> [-m <message>] [-O] [--add-rule] [-T]
 
-          -r <file>    v2 rulebase file to load (required)
+          -r <path>    v2 rulebase file to load, or a directory whose rulebase
+                       files are all loaded (recursively) into one combined
+                       rulebase (required)
           -m <message> normalize a single message instead of reading stdin
           -O           always add the original message to the output
           --add-rule   add a mock-up of the matching rule to the output metadata

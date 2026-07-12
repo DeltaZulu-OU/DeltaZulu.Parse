@@ -48,8 +48,9 @@ This is a **direct port of the v2 engine only**:
 - `bench/DeltaZulu.Normalize.Benchmarks/` — BenchmarkDotNet hot-path benchmarks;
   `bench/BASELINE.md` records the measured effect of each optimization phase.
 - `tools/LogNormalizer.Cli/` — a small CLI (`lognormalizer`), analogous to
-  the C project's `src/lognormalizer.c`: `-r <rulebase>` to load, then reads
-  messages from stdin (or `-m <message>`) and prints one JSON object per line.
+  the C project's `src/lognormalizer.c`: `-r <rulebase>` to load (a file or a
+  directory tree of rulebase files), then reads messages from stdin (or
+  `-m <message>`) and prints one JSON object per line.
 - `tests/DeltaZulu.Normalize.Tests/` — MSTest tests. Fixtures are behavioral cases
   ported from the C project's `tests/*.sh` shell fixtures (verified against
   the real expected output, not blindly copied — the original shell harness's
@@ -86,6 +87,20 @@ ctx.LoadSamplesFromString("""
 int r = ctx.Normalize("Oct 29 09:47:08 myhost sshd: no longer listening on 192.168.1.1#22", out var json);
 // json: {"date":"Oct 29 09:47:08","host":"myhost","tag":"sshd","ip":"192.168.1.1","port":"22"}
 ```
+
+Rulebases can also be loaded from files or whole directory trees, all merged
+into one combined PDAG:
+
+```csharp
+ctx.LoadSamples("rules.rulebase");            // a single file …
+ctx.LoadSamples("rules/");                    // … or a directory (recursive)
+ctx.LoadSamplesFromDirectory("rules/", "*.rulebase", recursive: true);
+```
+
+Directory loads are deterministic (files load in ordinal path order), skip
+hidden files, and treat every file as an independent v2 rulebase: each needs
+its own `version=2` header, and a `prefix=` set in one file does not leak
+into the next. `include=` lines inside a rulebase may also name a directory.
 
 ## Using the CLI
 

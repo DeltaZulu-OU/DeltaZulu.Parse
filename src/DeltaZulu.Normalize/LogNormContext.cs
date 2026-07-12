@@ -86,12 +86,31 @@ public sealed class LogNormContext
     }
 
     /// <summary>
-    /// Load a rulebase file (must be a v2 rulebase starting with "version=2").
+    /// Load a rulebase file (must be a v2 rulebase starting with "version=2")
+    /// or a directory of rulebase files (loaded recursively, equivalent to
+    /// <see cref="LoadSamplesFromDirectory"/> with its defaults).
     /// Rules are added to whatever has been loaded before; loading is allowed
     /// at any time, including after normalization has started.
     /// </summary>
     /// <returns>0 on success, non-zero otherwise</returns>
-    public int LoadSamples(string path) => LoadUnderLock(() => RulebaseLoader.LoadFile(this, path));
+    public int LoadSamples(string path) => LoadUnderLock(() => RulebaseLoader.Load(this, path));
+
+    /// <summary>
+    /// Load every rulebase file in <paramref name="directory"/> — and, unless
+    /// <paramref name="recursive"/> is false, its subdirectories — into this
+    /// context, building one combined PDAG. Files are loaded in ordinal path
+    /// order (deterministic across runs and platforms); hidden files (name
+    /// starting with '.') are skipped. Each file must be a complete v2
+    /// rulebase with its own "version=2" header, and a prefix= set in one
+    /// file does not leak into the next. Loading stops at the first file
+    /// that fails; rules loaded up to that point remain in the context.
+    /// </summary>
+    /// <param name="directory">Directory to load rulebase files from.</param>
+    /// <param name="searchPattern">File name pattern to match (default: all files).</param>
+    /// <param name="recursive">Whether to descend into subdirectories (default: true).</param>
+    /// <returns>0 on success, non-zero otherwise</returns>
+    public int LoadSamplesFromDirectory(string directory, string searchPattern = "*", bool recursive = true)
+        => LoadUnderLock(() => RulebaseLoader.LoadDirectory(this, directory, searchPattern, recursive));
 
     /// <summary>
     /// Load rulebase content from a string. The string must contain the rule

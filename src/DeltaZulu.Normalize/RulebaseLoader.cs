@@ -23,6 +23,25 @@ internal static class RulebaseLoader
     private const int MaxFieldNameLen = 1024;
     private const int MaxTypeNameLen = 1024;
 
+    /// <summary>
+    /// Load a rulebase path: a single file, or a directory tree of rulebase
+    /// files (loaded recursively, see <see cref="LoadDirectory"/>).
+    /// </summary>
+    public static int Load(LogNormContext ctx, string path)
+    {
+        /* a path that exists as given wins over the DeltaZulu.Normalize_RULEBASES
+         * fallback; within each, a file wins over a directory */
+        if (File.Exists(path))
+            return LoadFile(ctx, path);
+        if (Directory.Exists(path))
+            return LoadDirectory(ctx, path, "*", recursive: true);
+        if (ResolveRulebasePath(path) != null)
+            return LoadFile(ctx, path);
+        if (ResolveRulebaseDirectory(path) != null)
+            return LoadDirectory(ctx, path, "*", recursive: true);
+        return LoadFile(ctx, path); /* emits the "cannot open rulebase" error */
+    }
+
     /// <summary>Load a rulebase file (must start with a "version=2" header line).</summary>
     public static int LoadFile(LogNormContext ctx, string path)
     {
@@ -38,6 +57,63 @@ internal static class RulebaseLoader
         ctx.ConfFile = savedFile;
         ctx.ConfLineNumber = savedLine;
         return r;
+    }
+
+    /// <summary>
+    /// Load every rulebase file found in a directory (and, when
+    /// <paramref name="recursive"/> is set, its subdirectories). Files are
+    /// loaded in ordinal path order so the result is deterministic across
+    /// platforms and runs; hidden files (name starting with '.') are skipped.
+    /// Each file is independent: it must carry its own "version=2" header and
+    /// any prefix= it sets does not leak into the next file. Loading stops at
+    /// the first file that fails.
+    /// </summary>
+    public static int LoadDirectory(LogNormContext ctx, string directory, string searchPattern, bool recursive)
+    {
+        string? resolved = ResolveRulebaseDirectory(directory);
+        if (resolved == null)
+        {
+            ctx.Error($"cannot open rulebase directory '{directory}'");
+            return 1;
+        }
+
+        string[] files;
+        try
+        {
+            files = Directory.GetFiles(resolved, searchPattern,
+                recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            ctx.Error($"cannot enumerate rulebase directory '{directory}': {ex.Message}");
+            return 1;
+        }
+
+        Array.Sort(files, StringComparer.Ordinal);
+
+        string? savedPrefix = ctx.RulePrefix;
+        int loaded = 0;
+        foreach (string file in files)
+        {
+            if (Path.GetFileName(file).StartsWith('.'))
+                continue;
+            ctx.RulePrefix = savedPrefix;
+            int r = LoadFile(ctx, file);
+            if (r != 0)
+            {
+                ctx.RulePrefix = savedPrefix;
+                return r;
+            }
+            loaded++;
+        }
+        ctx.RulePrefix = savedPrefix;
+
+        if (loaded == 0)
+        {
+            ctx.Error($"no rulebase files match '{searchPattern}' in directory '{directory}'");
+            return 1;
+        }
+        return 0;
     }
 
     /// <summary>Load rulebase content from a string (no "version=2" header expected).</summary>
@@ -66,6 +142,17 @@ internal static class RulebaseLoader
             return null;
         string candidate = Path.Combine(rbLib, file);
         return File.Exists(candidate) ? candidate : null;
+    }
+
+    private static string? ResolveRulebaseDirectory(string directory)
+    {
+        if (Directory.Exists(directory))
+            return directory;
+        string? rbLib = Environment.GetEnvironmentVariable("DeltaZulu.Normalize_RULEBASES");
+        if (rbLib == null || Path.IsPathRooted(directory))
+            return null;
+        string candidate = Path.Combine(rbLib, directory);
+        return Directory.Exists(candidate) ? candidate : null;
     }
 
     private static int SampLoad(LogNormContext ctx, string file)
