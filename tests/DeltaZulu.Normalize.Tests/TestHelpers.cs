@@ -12,10 +12,10 @@ internal static class TestHelpers
         var ctx = new LogNormContext { Options = options };
         var errors = new List<string>();
         ctx.ErrorCallback = errors.Add;
-        int loadResult = ctx.LoadSamplesFromString(rulebaseBody);
+        var loadResult = ctx.LoadSamplesFromString(rulebaseBody);
         Assert.IsTrue(loadResult == 0, $"rulebase failed to load: {string.Join("; ", errors)}");
 
-        int r = ctx.Normalize(message, out JsonObject json);
+        var r = ctx.Normalize(message, out var json);
         return (r, json);
     }
 
@@ -23,27 +23,32 @@ internal static class TestHelpers
     public static void AssertJsonEquals(string expectedJson, JsonNode? actual)
     {
         JsonNode? expected = JsonNode.Parse(expectedJson);
-        bool equal = JsonNode.DeepEquals(Normalize(expected), Normalize(actual));
+        var equal = JsonNode.DeepEquals(Normalize(expected), Normalize(actual));
         if (!equal)
         {
             Assert.Fail($"JSON mismatch.\nExpected: {expected?.ToJsonString()}\nActual:   {actual?.ToJsonString()}");
         }
     }
 
-    /// <summary>Assert that a JSON object contains an expected field with a specific value.</summary>
     public static void AssertJsonContains(JsonNode? json, string fieldName, string expectedValue)
     {
-        if (json is not JsonObject obj)
+        if (json is not JsonObject)
         {
             Assert.Fail($"Expected JSON object, got {json?.GetType().Name ?? "null"}");
         }
-        if (!obj.TryGetPropertyValue(fieldName, out JsonNode? fieldValue))
+
+        // Safely cast now that the guard clause has passed
+        var obj = json.AsObject();
+
+        if (!obj.TryGetPropertyValue(fieldName, out var fieldValue))
         {
             Assert.Fail($"Field '{fieldName}' not found in JSON: {obj.ToJsonString()}");
         }
-        string actualValue = fieldValue?.ToJsonString() ?? "null";
+
+        var actualValue = fieldValue?.ToJsonString() ?? "null";
         JsonNode? expectedNode = JsonNode.Parse(expectedValue);
-        string expectedJson = expectedNode?.ToJsonString() ?? "null";
+        var expectedJson = expectedNode?.ToJsonString() ?? "null";
+
         if (actualValue != expectedJson)
         {
             Assert.Fail($"Field '{fieldName}' mismatch.\nExpected: {expectedJson}\nActual:   {actualValue}");
@@ -56,19 +61,25 @@ internal static class TestHelpers
         switch (node)
         {
             case JsonObject obj:
-            {
-                var sorted = new JsonObject();
-                foreach (string key in obj.Select(kv => kv.Key).OrderBy(k => k, StringComparer.Ordinal))
-                    sorted[key] = Normalize(obj[key]?.DeepClone());
-                return sorted;
-            }
+                {
+                    var sorted = new JsonObject();
+                    foreach (var key in obj.Select(kv => kv.Key).OrderBy(k => k, StringComparer.Ordinal))
+                    {
+                        sorted[key] = Normalize(obj[key]?.DeepClone());
+                    }
+
+                    return sorted;
+                }
             case JsonArray arr:
-            {
-                var result = new JsonArray();
-                foreach (JsonNode? item in arr)
-                    result.Add(Normalize(item?.DeepClone()));
-                return result;
-            }
+                {
+                    var result = new JsonArray();
+                    foreach (var item in arr)
+                    {
+                        result.Add(Normalize(item?.DeepClone()));
+                    }
+
+                    return result;
+                }
             default:
                 return node;
         }

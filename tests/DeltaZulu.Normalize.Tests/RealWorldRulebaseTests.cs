@@ -168,7 +168,10 @@ public class RealWorldRulebaseTests
     public void QuotedStringVariants()
     {
         const string rb = "rule=: Message: %msg:quoted-string%";
-        var (r, j) = TestHelpers.Normalize(rb, """Message: "error occurred"""");
+        var (r, j) = TestHelpers.Normalize(rb, """
+Message: \"error occurred\"
+"""
+);
         Assert.AreEqual(0, r);
         AssertJsonEquals("""{"msg": "error occurred"}""", j);
     }
