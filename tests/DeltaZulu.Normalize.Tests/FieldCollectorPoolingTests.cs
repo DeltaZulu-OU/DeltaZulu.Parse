@@ -35,17 +35,20 @@ public class FieldCollectorPoolingTests
     [TestMethod]
     public void MoreFieldsThanPooledCapacity_GrowsAndReturnsCorrectResult()
     {
-        /* 6 fields exceeds the scratch collector's initial pooled capacity
-         * (4), forcing Grow() to return the pooled array mid-flight and
-         * switch to a plain heap array; the result must still be complete
-         * and correct, and the subsequent ReturnScratch() must not attempt
-         * to return the (already-returned) original array again. */
+        /* ArrayPool<T>.Shared buckets round a Rent(4) request up to its
+         * smallest bucket (16 entries), so a handful of extra fields is not
+         * enough to force Grow() - the test must exceed that real bucket
+         * size, not just the requested InitialCapacity, to actually drive
+         * the pooled-array-returned-mid-flight / heap-array-fallback path
+         * and the double-return safeguard. */
+        const int fieldCount = 20;
         var ctx = new LogNormContext();
-        Assert.AreEqual(0, ctx.LoadSamplesFromString(
-            "rule=:a %f1:word% %f2:word% %f3:word% %f4:word% %f5:word% %f6:word%"));
+        var fields = string.Join(" ", Enumerable.Range(1, fieldCount).Select(i => $"%f{i}:word%"));
+        Assert.AreEqual(0, ctx.LoadSamplesFromString($"rule=:a {fields}"));
 
-        Assert.AreEqual(0, ctx.Normalize("a 1 2 3 4 5 6", out JsonObject j));
-        for (var i = 1; i <= 6; i++)
+        var msg = "a " + string.Join(" ", Enumerable.Range(1, fieldCount));
+        Assert.AreEqual(0, ctx.Normalize(msg, out JsonObject j));
+        for (var i = 1; i <= fieldCount; i++)
         {
             Assert.AreEqual(i.ToString(), j[$"f{i}"]!.GetValue<string>());
         }
@@ -72,7 +75,7 @@ public class FieldCollectorPoolingTests
             }
         })).ToArray();
 
-        Task.WaitAll(tasks, TimeSpan.FromSeconds(30));
+        Assert.IsTrue(Task.WaitAll(tasks, TimeSpan.FromSeconds(30)), "concurrent normalization workers did not finish within the timeout");
         Assert.AreEqual(0, failures.Count, string.Join("\n", failures));
     }
 
