@@ -114,6 +114,13 @@ tags) is stripped from the CLI's output by default, matching the reference
 
 ## Known intentional behavior notes
 
+See [`docs/COMPARISON.md`](docs/COMPARISON.md) for the full audit this
+section is drawn from — a line-by-line comparison against upstream
+`rsyslog/liblognorm`, covering the motif parsers, the rulebase loader, the
+PDAG engine, and the public API/CLI, including which of the differences
+below are confirmed, which were newly identified and documented as part of
+that audit, and which are outright new capabilities with no C equivalent.
+
 - Like the C engine, the `rest` motif can match zero bytes — when two rules
   share a prefix and one extends the other with a trailing `%f:rest%`, the
   DAG node after the shared prefix is both terminal (for the shorter rule)
@@ -132,3 +139,24 @@ tags) is stripped from the CLI's output by default, matching the reference
   when no `matching.permitted` restriction is configured (like C's all-true
   byte table) and as not-permitted when one is (they cannot be named in the
   byte-range table). ASCII behavior is identical to the C engine.
+- Unlike the C engine, this port's normalizer never lets `event.tags`/rule
+  location metadata attribute to a shallower rule than the one whose fields
+  were actually extracted. In C, when a shared-prefix node is both terminal
+  (a shorter rule) and has a `rest` edge (a longer rule — see the first
+  bullet above), an unconditional assignment on unwind can leave the C
+  engine reporting the *longer* rule's fields alongside the *shorter*
+  rule's tags; this port's normalizer keeps them consistent. Confirmed by
+  building and running the real C library side by side with this port (see
+  `docs/COMPARISON.md` §3 for the exact rulebase/input and outputs).
+- CRLF (`\r\n`) line endings anywhere in a rulebase file are treated as a
+  line terminator, not just on the `version=2` header line. The C engine
+  only strips `\r` from that first line; every subsequent line keeps a
+  trailing `\r` baked into the parsed pattern in a real CRLF file, which
+  then can never match real input. This port avoids that by normalizing
+  line endings throughout the loader.
+- The `repeat` motif stops if a round of `parser`/`while` both match
+  zero-width, instead of looping forever — the C engine has no such guard
+  and can hang on a rulebase where that's possible.
+- The `cef` motif rejects a message ending in a dangling, unescaped
+  trailing backslash inside the last extension value, where the C engine
+  accepts it but copies an out-of-bounds byte into the extracted value.
