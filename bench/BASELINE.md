@@ -192,3 +192,35 @@ Observations:
 - Verified with `FieldCollectorPoolingTests`: no cross-call leakage from
   array reuse, correct behavior when growth un-pools mid-flight, and no
   corruption under concurrent `Normalize` calls sharing the pool.
+
+### Independent verification run
+
+A full re-run (all suites, same host) confirmed the fix precisely: every
+legacy-path benchmark landed at baseline **+32 B** (MatchFast, MatchBacktrack,
+NoMatchTrie, NoMatchBacktrack, SingleThreadNormalize, LongCharTo/Word/Quoted,
+LongLiteral all exactly +32 B; ConcurrentNormalize +34 B, within noise), and
+`Structured` landed at 2,470 B, −328 B versus baseline. `LongCharToFlat`/
+`LongWordFlat` held at −75 % allocation vs. their non-flat counterparts.
+
+This run also raised a fair question: `StructuredToJsonText` (3,094 B) looks
+worse than plain `Structured` (2,470 B) — but that compares text output
+against no text output, which isn't the right baseline. The right one is
+what `NormalizeToString` cost *before* the rewrite (materialize a
+`JsonObject`, then serialize it) — added as `StructuredClassicToJsonText`.
+Measured back-to-back:
+
+| Method                      | Allocated |
+|---------------------------- |----------:|
+| StructuredToJsonText (flat) |   ~3.09 KB |
+| StructuredClassicToJsonText |   ~2.72 KB |
+
+The flat text path allocates ~13 % more than materialize-then-serialize on
+this corpus — likely `NormalizeResult.ToJsonString()`'s `ArrayBufferWriter<byte>`
+growing at least once from its small default starting size, where
+`JsonNode.ToJsonString` is already tuned for this. Wall-clock numbers on
+this host vary too much run-to-run to compare directly (the same flat path
+measured 1,113.7 ns and 2,520 ns in two consecutive runs); allocation is the
+reliable signal here. This is a real gap in `NormalizeResult.ToJsonString()`
+itself, not a tax on legacy callers — both sides of this comparison use the
+new API — and is left as an open, non-blocking follow-up
+(`StructuredClassicToJsonText` keeps it measurable).

@@ -118,6 +118,32 @@ public class NormalizationBenchmarks
 
         return r;
     }
+
+    /* mirrors the library's internal JsonText.SerializerOptions (not visible
+     * across the assembly boundary), so this is an apples-to-apples compact
+     * serialization for comparison */
+    private static readonly System.Text.Json.JsonSerializerOptions ClassicSerializerOptions = new() {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
+    /// What NormalizeToString cost before it was rewritten over the flat
+    /// result (materialize a JsonObject, then serialize it) — the reference
+    /// point StructuredToJsonText must beat to justify running the walk
+    /// through the flat path at all when the caller wants text.
+    /// </summary>
+    [Benchmark(OperationsPerInvoke = 4)]
+    public int StructuredClassicToJsonText()
+    {
+        var r = 0;
+        foreach (var msg in _structuredMatch)
+        {
+            r += _structuredCtx.Normalize(msg, out JsonObject json);
+            _ = json.ToJsonString(ClassicSerializerOptions);
+        }
+
+        return r;
+    }
 }
 
 /// <summary>
