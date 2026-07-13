@@ -316,7 +316,9 @@ internal static class Normalizer
                     {
                         if (prs.Extract == ExtractMode.RawSpan)
                         {
-                            value = FieldValue.Node(JsonValue.Create(npb.Str.Substring(offs, parsed)));
+                            /* zero-copy: the string is produced only if the
+                             * result is materialized as JsonObject/JsonNode */
+                            value = FieldValue.Span(npb.Str, offs, parsed);
                         }
                         else
                         {
@@ -409,8 +411,11 @@ internal static class Normalizer
 
     private static void AddUnparsedField(string str, int offs, FieldCollector fields)
     {
-        fields.Set(OriginalMsgKey, FieldValue.Node(JsonValue.Create(str)));
-        fields.Set(UnparsedDataKey, FieldValue.Node(JsonValue.Create(str[Math.Min(offs, str.Length)..])));
+        /* full-range and tail slices; a whole-string span materializes back
+         * to the original string instance without a copy */
+        var start = Math.Min(offs, str.Length);
+        fields.Set(OriginalMsgKey, FieldValue.Span(str, 0, str.Length));
+        fields.Set(UnparsedDataKey, FieldValue.Span(str, start, str.Length - start));
     }
 
     /// <summary>Normalize a message against a snapshot (port of ln_normalize).</summary>
@@ -440,7 +445,7 @@ internal static class Normalizer
             }
             if ((ctx.Options & LogNormOptions.AddOriginalMessage) != 0)
             {
-                fields.Set(OriginalMsgKey, FieldValue.Node(JsonValue.Create(str)));
+                fields.Set(OriginalMsgKey, FieldValue.Span(str, 0, str.Length));
             }
 
             AddRuleMetadata(npb, fields, term);
