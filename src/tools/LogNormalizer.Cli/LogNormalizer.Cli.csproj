@@ -6,15 +6,13 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <RootNamespace>LogNormalizer.Cli</RootNamespace>
+    <AssemblyName>lognormalizer</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="BenchmarkDotNet" Version="0.14.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="../../src/DeltaZulu.Normalize/DeltaZulu.Normalize.csproj" />
+    <ProjectReference Include="..\..\DeltaZulu.Normalize\DeltaZulu.Normalize.csproj" />
   </ItemGroup>
 
 </Project>

@@ -6,10 +6,10 @@
     <Project Path="tests/DeltaZulu.Normalize.Tests/DeltaZulu.Normalize.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
-    <Project Path="tools/LogNormalizer.Cli/LogNormalizer.Cli.csproj" />
-    <Project Path="tools/LogCluster.Cli/LogCluster.Cli.csproj" />
+    <Project Path="src/tools/LogNormalizer.Cli/LogNormalizer.Cli.csproj" />
+    <Project Path="src/tools/LogCluster.Cli/LogCluster.Cli.csproj" />
   </Folder>
   <Folder Name="/bench/">
-    <Project Path="bench/DeltaZulu.Normalize.Benchmarks/DeltaZulu.Normalize.Benchmarks.csproj" />
+    <Project Path="src/bench/DeltaZulu.Normalize.Benchmarks/DeltaZulu.Normalize.Benchmarks.csproj" />
   </Folder>
 </Solution>
