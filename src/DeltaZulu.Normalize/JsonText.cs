@@ -167,4 +167,14 @@ internal static class JsonText
     public static readonly JsonSerializerOptions SerializerOptions = new() {
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
+
+    /// <summary>
+    /// Writer options producing output byte-identical to
+    /// <see cref="ToCompactString"/> (same escaping, no added whitespace),
+    /// for serializing straight from a <see cref="FieldCollector"/>.
+    /// </summary>
+    public static readonly JsonWriterOptions CompactWriterOptions = new() {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        SkipValidation = true,
+    };
 }

@@ -49,7 +49,7 @@ internal sealed class AnnotationSet
     }
 
     /// <summary>Annotate an event according to its tag bucket (port of ln_annotate).</summary>
-    public void Annotate(JsonObject json, JsonArray tagBucket)
+    public void Annotate(FieldCollector fields, JsonArray tagBucket)
     {
         if (IsEmpty)
         {
@@ -75,7 +75,7 @@ internal sealed class AnnotationSet
             for (var j = annot.Ops.Count - 1; j >= 0; --j)
             {
                 (var name, var value) = annot.Ops[j];
-                json[name] = value;
+                fields.Set(name, FieldValue.Node(JsonValue.Create(value)));
             }
         }
     }

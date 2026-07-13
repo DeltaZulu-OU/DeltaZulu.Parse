@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using BenchmarkDotNet.Attributes;
 
 namespace DeltaZulu.Normalize.Benchmarks;
@@ -21,8 +22,9 @@ public class LongFieldBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        _ctx = new LogNormContext();
-        _ctx.ErrorCallback = msg => throw new InvalidOperationException($"rulebase error: {msg}");
+        _ctx = new LogNormContext {
+            ErrorCallback = msg => throw new InvalidOperationException($"rulebase error: {msg}")
+        };
         var longLiteral = string.Concat(Enumerable.Repeat("prefix-segment/", 20)); /* 300 chars */
         var r = _ctx.LoadSamplesFromString($"""
             rule=:ct %f:char-to:;%; %r:rest%
@@ -44,7 +46,7 @@ public class LongFieldBenchmarks
         foreach ((var msg, var name) in new[]
                  { (_charToMsg, "char-to"), (_wordMsg, "word"), (_quotedMsg, "quoted"), (_literalMsg, "literal") })
         {
-            if (_ctx.Normalize(msg, out _) != 0)
+            if (_ctx.Normalize(msg, out JsonObject _) != 0)
             {
                 throw new InvalidOperationException($"corpus error: {name} message does not match");
             }
@@ -52,14 +54,23 @@ public class LongFieldBenchmarks
     }
 
     [Benchmark]
-    public int LongCharTo() => _ctx.Normalize(_charToMsg, out _);
+    public int LongCharTo() => _ctx.Normalize(_charToMsg, out JsonObject _);
 
     [Benchmark]
-    public int LongWord() => _ctx.Normalize(_wordMsg, out _);
+    public int LongWord() => _ctx.Normalize(_wordMsg, out JsonObject _);
 
     [Benchmark]
-    public int LongQuoted() => _ctx.Normalize(_quotedMsg, out _);
+    public int LongQuoted() => _ctx.Normalize(_quotedMsg, out JsonObject _);
 
     [Benchmark]
-    public int LongLiteral() => _ctx.Normalize(_literalMsg, out _);
+    public int LongLiteral() => _ctx.Normalize(_literalMsg, out JsonObject _);
+
+    /* flat-result variants: the 300-char field values stay slices of the
+     * input message, so no per-field string copy occurs */
+
+    [Benchmark]
+    public int LongCharToFlat() => _ctx.Normalize(_charToMsg, out NormalizeResult _);
+
+    [Benchmark]
+    public int LongWordFlat() => _ctx.Normalize(_wordMsg, out NormalizeResult _);
 }

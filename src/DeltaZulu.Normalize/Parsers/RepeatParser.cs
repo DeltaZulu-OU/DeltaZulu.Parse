@@ -147,7 +147,7 @@ internal static class RepeatParser
         var lastMatch = strtoffs;
         var lastKnownGood = strtoffs;
         JsonArray? jsonArr = null;
-        JsonObject? parsedValue = null;
+        FieldCollector? roundFields = null;
         var parsedToSave = npb.ParsedTo;
         var longestParsedToSave = npb.LongestParsedTo;
         var mergeResults = parserName == ".";
@@ -156,15 +156,15 @@ internal static class RepeatParser
         do
         {
             var roundStart = strtoffs;
-            parsedValue ??= new JsonObject();
+            roundFields ??= new FieldCollector();
             var endNode = -1;
             r = Normalizer.NormalizeRec(npb, data.ParserRoot, strtoffs, bPartialMatch: true,
-                parsedValue, ref endNode, data.FailOnDuplicate, parsedValue, parserName);
+                roundFields, ref endNode, data.FailOnDuplicate, roundFields, parserName);
             strtoffs = npb.ParsedTo;
 
             if (r != 0)
             {
-                parsedValue = null;
+                roundFields = null;
                 if (data.PermitMismatchInParser)
                 {
                     strtoffs = lastKnownGood; /* go back to final match */
@@ -178,22 +178,14 @@ internal static class RepeatParser
             {
                 jsonArr ??= new JsonArray();
 
-                /* a member named "." means: place only that value into the array */
-                JsonNode? toAdd = parsedValue;
-                foreach ((var key, var val) in parsedValue)
-                {
-                    if (key == ".")
-                    {
-                        toAdd = val;
-                    }
-                }
-                if (!ReferenceEquals(toAdd, parsedValue))
-                {
-                    parsedValue.Remove("."); /* detach, so no clone is needed */
-                }
-
-                jsonArr.Add(toAdd);
-                parsedValue = null;
+                /* a member named "." means: place only that value into the array;
+                 * the round collector is discarded either way, so no clone is
+                 * needed */
+                var dotIdx = roundFields.IndexOf(".");
+                jsonArr.Add(dotIdx >= 0
+                    ? roundFields.ValueAt(dotIdx).ToJsonNode()
+                    : roundFields.ToJsonObject());
+                roundFields = null;
             }
 
             npb.ParsedTo = 0;
@@ -201,7 +193,7 @@ internal static class RepeatParser
             lastKnownGood = strtoffs; /* record position in case the while-check fails */
             endNode = -1;
             r = Normalizer.NormalizeRec(npb, data.WhileRoot, strtoffs, bPartialMatch: true,
-                null, ref endNode, failOnDuplicate: false, curJson: null, parserName);
+                null, ref endNode, failOnDuplicate: false, cur: null, parserName);
             if (r == 0)
             {
                 strtoffs = npb.ParsedTo;
@@ -218,7 +210,7 @@ internal static class RepeatParser
         parsed = strtoffs - offs;
         if (wantValue)
         {
-            value = mergeResults ? parsedValue : jsonArr;
+            value = mergeResults ? roundFields?.ToJsonObject() : jsonArr;
         }
 
         npb.ParsedTo = parsedToSave;

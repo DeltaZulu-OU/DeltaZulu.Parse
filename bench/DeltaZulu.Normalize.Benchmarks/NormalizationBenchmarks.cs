@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using System.Collections.Concurrent;
 using BenchmarkDotNet.Attributes;
 
@@ -44,7 +45,7 @@ public class NormalizationBenchmarks
     {
         foreach (var msg in messages)
         {
-            var matched = ctx.Normalize(msg, out _) == 0;
+            var matched = ctx.Normalize(msg, out JsonObject _) == 0;
             if (matched != shouldMatch)
             {
                 throw new InvalidOperationException(
@@ -55,8 +56,9 @@ public class NormalizationBenchmarks
 
     private static LogNormContext Load(string rulebase)
     {
-        var ctx = new LogNormContext();
-        ctx.ErrorCallback = msg => throw new InvalidOperationException($"rulebase error: {msg}");
+        var ctx = new LogNormContext {
+            ErrorCallback = msg => throw new InvalidOperationException($"rulebase error: {msg}")
+        };
         if (ctx.LoadSamplesFromString(rulebase) != 0)
         {
             throw new InvalidOperationException("rulebase load failed");
@@ -70,7 +72,7 @@ public class NormalizationBenchmarks
         var r = 0;
         foreach (var msg in messages)
         {
-            r += ctx.Normalize(msg, out _);
+            r += ctx.Normalize(msg, out JsonObject _);
         }
 
         return r;
@@ -90,6 +92,58 @@ public class NormalizationBenchmarks
 
     [Benchmark(OperationsPerInvoke = 4)]
     public int Structured() => RunAll(_structuredCtx, _structuredMatch);
+
+    /* flat-result variants of Structured: no JsonObject is ever built */
+
+    [Benchmark(OperationsPerInvoke = 4)]
+    public int StructuredFlatOnly()
+    {
+        var r = 0;
+        foreach (var msg in _structuredMatch)
+        {
+            r += _structuredCtx.Normalize(msg, out NormalizeResult _);
+        }
+
+        return r;
+    }
+
+    [Benchmark(OperationsPerInvoke = 4)]
+    public int StructuredToJsonText()
+    {
+        var r = 0;
+        foreach (var msg in _structuredMatch)
+        {
+            r += _structuredCtx.NormalizeToString(msg, out _);
+        }
+
+        return r;
+    }
+
+    /* mirrors the library's internal JsonText.SerializerOptions (not visible
+     * across the assembly boundary), so this is an apples-to-apples compact
+     * serialization for comparison */
+    private static readonly System.Text.Json.JsonSerializerOptions ClassicSerializerOptions = new() {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    /// <summary>
+    /// What NormalizeToString cost before it was rewritten over the flat
+    /// result (materialize a JsonObject, then serialize it) — the reference
+    /// point StructuredToJsonText must beat to justify running the walk
+    /// through the flat path at all when the caller wants text.
+    /// </summary>
+    [Benchmark(OperationsPerInvoke = 4)]
+    public int StructuredClassicToJsonText()
+    {
+        var r = 0;
+        foreach (var msg in _structuredMatch)
+        {
+            r += _structuredCtx.Normalize(msg, out JsonObject json);
+            _ = json.ToJsonString(ClassicSerializerOptions);
+        }
+
+        return r;
+    }
 }
 
 /// <summary>
@@ -110,8 +164,9 @@ public class ConcurrentBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        var ctx = new LogNormContext();
-        ctx.ErrorCallback = msg => throw new InvalidOperationException($"rulebase error: {msg}");
+        var ctx = new LogNormContext {
+            ErrorCallback = msg => throw new InvalidOperationException($"rulebase error: {msg}")
+        };
         var rb = BenchmarkRulebases.TrieHeavy(200, out var match, out _);
         if (ctx.LoadSamplesFromString(rb) != 0)
         {
@@ -125,7 +180,7 @@ public class ConcurrentBenchmarks
             _messages[i] = match[i % match.Length];
         }
 
-        _ctx.Normalize(_messages[0], out _);
+        _ctx.Normalize(_messages[0], out JsonObject _);
     }
 
     [Benchmark(OperationsPerInvoke = MessagesPerInvoke)]
@@ -143,7 +198,7 @@ public class ConcurrentBenchmarks
         range => {
             for (var i = range.Item1; i < range.Item2; i++)
             {
-                _ctx.Normalize(_messages[i], out _);
+                _ctx.Normalize(_messages[i], out JsonObject _);
             }
         });
     }
@@ -153,7 +208,7 @@ public class ConcurrentBenchmarks
     {
         for (var i = 0; i < MessagesPerInvoke; i++)
         {
-            _ctx.Normalize(_messages[i], out _);
+            _ctx.Normalize(_messages[i], out JsonObject _);
         }
     }
 }

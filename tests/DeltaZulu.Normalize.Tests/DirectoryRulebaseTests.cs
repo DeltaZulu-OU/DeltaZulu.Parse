@@ -96,7 +96,7 @@ public class DirectoryRulebaseTests
 
         AssertMatches(ctx, "PFX one x", "a", "x");
         AssertMatches(ctx, "two y", "b", "y");
-        Assert.AreNotEqual(0, ctx.Normalize("PFX two y", out _), "prefix leaked into the second file");
+        Assert.AreNotEqual(0, ctx.Normalize("PFX two y", out JsonObject _), "prefix leaked into the second file");
     }
 
     [TestMethod]
@@ -137,7 +137,7 @@ public class DirectoryRulebaseTests
         Assert.AreEqual(0, ctx.LoadSamplesFromDirectory(_root, recursive: false), string.Join("; ", errors));
 
         AssertMatches(ctx, "top x", "a", "x");
-        Assert.AreNotEqual(0, ctx.Normalize("inner y", out _), "subdirectory file was loaded despite recursive: false");
+        Assert.AreNotEqual(0, ctx.Normalize("inner y", out JsonObject _), "subdirectory file was loaded despite recursive: false");
     }
 
     [TestMethod]
