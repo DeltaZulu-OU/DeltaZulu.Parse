@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>DeltaZulu.Normalize.PatternMining</RootNamespace>
+    <AssemblyName>DeltaZulu.Normalize.PatternMining</AssemblyName>
+    <Description>LogCluster-derived batch pattern mining and liblognorm rule suggestion for DeltaZulu.Normalize.</Description>
+    <PackageLicenseExpression>LGPL-2.1-or-later</PackageLicenseExpression>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>
