@@ -45,6 +45,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # Use 'recursive' to fetch nested submodules, or 'true' for just the top-level ones
+          submodules: recursive
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
