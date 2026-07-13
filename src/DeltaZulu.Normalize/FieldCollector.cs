@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -21,8 +22,46 @@ internal sealed class FieldCollector
         public FieldValue Value;
     }
 
-    private Entry[] _entries = new Entry[4];
+    private const int InitialCapacity = 4;
+
+    private Entry[] _entries;
     private int _count;
+    private bool _pooled;
+
+    public FieldCollector() => _entries = new Entry[InitialCapacity];
+
+    private FieldCollector(bool pooled)
+    {
+        _entries = ArrayPool<Entry>.Shared.Rent(InitialCapacity);
+        _pooled = true;
+    }
+
+    /// <summary>
+    /// Create a collector whose backing array is rented from the shared pool,
+    /// for the classic <c>Normalize(out JsonObject)</c> path: the collector
+    /// is discarded the instant it is materialized, so every call would
+    /// otherwise pay a fixed array allocation regardless of whether the
+    /// caller ever touches the flat API. The caller must call
+    /// <see cref="ReturnScratch"/> once fully done reading it (after
+    /// materializing, never before), and must not let the instance escape
+    /// past that point.
+    /// </summary>
+    public static FieldCollector RentScratch() => new(pooled: true);
+
+    /// <summary>Return the rented backing array. No-op if not pooled (already returned, or never rented).</summary>
+    public void ReturnScratch()
+    {
+        if (!_pooled)
+        {
+            return;
+        }
+
+        Array.Clear(_entries, 0, _count);
+        ArrayPool<Entry>.Shared.Return(_entries);
+        _entries = [];
+        _count = 0;
+        _pooled = false;
+    }
 
     public int Count => _count;
 
@@ -57,12 +96,32 @@ internal sealed class FieldCollector
 
         if (_count == _entries.Length)
         {
-            Array.Resize(ref _entries, _count * 2);
+            Grow();
         }
 
         _entries[_count].Name = name;
         _entries[_count].Value = value;
         _count++;
+    }
+
+    /// <summary>
+    /// Grow past capacity. A pooled array is returned here rather than
+    /// resized in place (ArrayPool arrays can't be resized); past this
+    /// point the collector holds a plain heap array like any other, so
+    /// growing again needs no further pool bookkeeping.
+    /// </summary>
+    private void Grow()
+    {
+        var bigger = new Entry[_entries.Length * 2];
+        Array.Copy(_entries, bigger, _count);
+        if (_pooled)
+        {
+            Array.Clear(_entries, 0, _count);
+            ArrayPool<Entry>.Shared.Return(_entries);
+            _pooled = false;
+        }
+
+        _entries = bigger;
     }
 
     /// <summary>Materialize as a <see cref="JsonObject"/>, in entry order.</summary>

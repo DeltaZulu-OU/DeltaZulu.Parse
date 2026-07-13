@@ -421,13 +421,37 @@ internal static class Normalizer
     /// <summary>Normalize a message against a snapshot (port of ln_normalize).</summary>
     public static int Normalize(LogNormContext ctx, CompiledPdag snap, string str, out FieldCollector fields)
     {
+        fields = new FieldCollector();
+        return NormalizeCore(ctx, snap, str, fields);
+    }
+
+    /// <summary>Normalize and materialize the result as a <see cref="JsonObject"/>.</summary>
+    public static int Normalize(LogNormContext ctx, CompiledPdag snap, string str, out JsonObject result)
+    {
+        /* fields is discarded the instant it is materialized below, so a
+         * rented array avoids paying a fixed allocation on every call for
+         * callers who never touch the flat NormalizeResult API */
+        var fields = FieldCollector.RentScratch();
+        try
+        {
+            var r = NormalizeCore(ctx, snap, str, fields);
+            result = fields.ToJsonObject();
+            return r;
+        }
+        finally
+        {
+            fields.ReturnScratch();
+        }
+    }
+
+    private static int NormalizeCore(LogNormContext ctx, CompiledPdag snap, string str, FieldCollector fields)
+    {
         var npb = new Npb { Ctx = ctx, Snap = snap, Str = str };
         if ((ctx.Options & LogNormOptions.AddRule) != 0)
         {
             npb.RuleSegments = new List<string>();
         }
 
-        fields = new FieldCollector();
         var endNode = NoNode;
         var r = NormalizeRec(npb, snap.RootNode, 0, bPartialMatch: false, fields, ref endNode,
             failOnDuplicate: false, cur: null, parserName: null);
@@ -454,14 +478,6 @@ internal static class Normalizer
         {
             AddUnparsedField(str, npb.LongestParsedTo, fields);
         }
-        return r;
-    }
-
-    /// <summary>Normalize and materialize the result as a <see cref="JsonObject"/>.</summary>
-    public static int Normalize(LogNormContext ctx, CompiledPdag snap, string str, out JsonObject result)
-    {
-        var r = Normalize(ctx, snap, str, out FieldCollector fields);
-        result = fields.ToJsonObject();
         return r;
     }
 }

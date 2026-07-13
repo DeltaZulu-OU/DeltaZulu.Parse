@@ -132,7 +132,63 @@ Observations:
   repeat) that build JsonNode trees regardless, so the flat-only gain there is
   ~15 % time / ~15 % bytes.
 - The classic `out JsonObject` overload keeps its cost on realistic events
-  (Structured slightly improves) but pays a fixed ~200 ns / ~200 B collector
-  overhead on tiny 2-field messages (LongCharTo above), since it now runs
-  flat-walk + materialize. Callers on that path at volume should move to
-  `NormalizeResult`.
+  (Structured slightly improves) but pays a fixed collector overhead on
+  every call, matched or not — see the fix below, which cuts it down to
+  near the object header alone.
+
+## Phase 5 fix — pool the scratch collector for the classic overload
+
+Review of the initial Phase 5 cut measured every benchmark that never
+touches `NormalizeResult` — `MatchFast`, `MatchBacktrack`, `NoMatchTrie`,
+`NoMatchBacktrack`, `LongCharTo`/`LongWord`/`LongQuoted`/`LongLiteral`,
+`ConcurrentNormalize`, `SingleThreadNormalize` — showing a near-uniform
++150–184 B regression versus the pre-#1/#2 baseline above, *independent of
+whether the message matched or how many fields it had*. Root cause: with a
+single walker feeding one `FieldCollector` (the deliberate design choice —
+see the flat-result-type discussion — that avoids duplicating the `"."`
+splice/`".."` unwrap semantics into two code paths), `Normalizer.Normalize(out
+JsonObject)` always allocates a `FieldCollector` object *and* its backing
+`Entry[4]` array, even on a total non-match (`AddUnparsedField` always sets
+`originalmsg`/`unparsed-data`, so the array is never actually skippable).
+That's a real, avoidable tax on every caller who never touches the flat
+API, not a acceptable cost of the new feature.
+
+Fix: `FieldCollector.RentScratch()` rents the backing array from
+`ArrayPool<Entry>.Shared` instead of `new`-ing it, used only by
+`Normalizer.Normalize(out JsonObject)` (the one call site that discards the
+collector the instant it materializes); `ReturnScratch()` releases it in a
+`finally` block right after `ToJsonObject()` copies everything out. Growing
+past the pooled capacity (more than 4 fields) returns the pooled array and
+falls back to a plain heap array from then on — no pool bookkeeping needed
+after that point. `Normalize(out FieldCollector)` / `NormalizeResult`, whose
+lifetime outlives the call, keep the plain non-pooled allocation, exactly as
+"conditional on actual use of the flat-result API" requires.
+
+| Method                | Pre-#1/#2 baseline | Post-fix  | Δ vs baseline |
+|---------------------- |--------------------:|----------:|---------------:|
+| MatchFast             |               614 B |     646 B |          +32 B |
+| MatchBacktrack        |               712 B |     744 B |          +32 B |
+| NoMatchTrie           |               475 B |     507 B |          +32 B |
+| NoMatchBacktrack      |               491 B |     523 B |          +32 B |
+| Structured            |             2,798 B |   2,470 B |         −328 B |
+| ConcurrentNormalize   |               615 B |     648 B |          +33 B |
+| SingleThreadNormalize |               614 B |     646 B |          +32 B |
+
+Observations:
+
+- The fixed tax drops from +150–184 B to a uniform +32 B — the
+  `FieldCollector` object header/fields themselves, which can't be removed
+  without eliminating the abstraction (and reopening the two-copy semantics
+  risk). This residual is intrinsic to the single-path architecture, not an
+  oversight.
+- `Structured` lands *below* the pre-#1/#2 baseline: its rulebase mixes
+  `json`/`cef`/`name-value-list`/`repeat`, so the pooled top-level array
+  saves an allocation on top of Phase 5's existing per-field wins, even
+  though nested per-round/custom-type collectors are intentionally left
+  unpooled (their cost is proportional to real repeat/custom-type usage,
+  not a blanket tax — pooling them would need to track escape into a
+  long-lived `NormalizeResult`, which is unnecessary complexity these
+  benchmarks don't call for).
+- Verified with `FieldCollectorPoolingTests`: no cross-call leakage from
+  array reuse, correct behavior when growth un-pools mid-flight, and no
+  corruption under concurrent `Normalize` calls sharing the pool.
