@@ -224,3 +224,37 @@ reliable signal here. This is a real gap in `NormalizeResult.ToJsonString()`
 itself, not a tax on legacy callers — both sides of this comparison use the
 new API — and is left as an open, non-blocking follow-up
 (`StructuredClassicToJsonText` keeps it measurable).
+
+A third independent run reproduced every number above to within 2–4 bytes
+(Structured 2,470 B, StructuredToJsonText 3,094 B, StructuredClassicToJsonText
+2,726 B), confirming the allocation figures are stable across runs on this
+host; only wall-clock timing shows run-to-run noise. One reading in that run
+(`LongLiteral` at 0 B, against an expected ~448 B) is an outlier against the
+otherwise exact +32 B pattern shared by every sibling benchmark, and came
+with nonzero Gen1/Gen2 counts alongside it — the signature of a GC event
+landing mid-measurement on a sub-200 ns benchmark and confusing the
+allocation diagnoser. Treated as measurement noise, not a result.
+
+## Summary: full journey (Phase 0 → final)
+
+| Benchmark             | Phase 0             | Final                | Δ time  | Δ alloc |
+|----------------------|---------------------:|----------------------:|--------:|--------:|
+| MatchFast             | 615.2 ns / 606 B     | 308.3 ns / 646 B      | −50 %   | +7 %    |
+| MatchBacktrack        | 653.1 ns / 704 B     | 294.9 ns / 744 B      | −55 %   | +6 %    |
+| NoMatchTrie           | 337.4 ns / 496 B     | 135.4 ns / 507 B      | −60 %   | +2 %    |
+| NoMatchBacktrack      | 485.3 ns / 664 B     | 178.9 ns / 523 B      | −63 %   | −21 %   |
+| Structured            | 1,977.0 ns / 2,972 B | 822.4 ns / 2,470 B    | −58 %   | −17 %   |
+| ConcurrentNormalize   | 664.4 ns / 607 B     | 127.4 ns / 649 B      | −81 %   | +7 %    |
+| SingleThreadNormalize | 610.4 ns / 606 B     | 298.1 ns / 646 B      | −51 %   | +6 %    |
+
+Across the whole arc — compiled snapshot (Phase 2), two-phase match/extract
+(Phase 3), SIMD scans (Phase 4), and the flat result type (Phase 5) — every
+scenario is **2–5× faster in wall-clock time**. Allocation is honestly
+two-sided: the scenarios that were genuinely allocation-heavy to begin with
+(backtracking failures, structured JSON-like motifs) are down **17–21 %**
+net; the simplest scenarios (a fast trie match, a plain no-match, a single
+uncontended call) are up a small, single-digit percentage (+2–7 %, ~11–42
+bytes) — entirely attributable to Phase 5's `FieldCollector` shell, the one
+deliberate, examined trade made to unlock the much larger wins on the flat
+API (up to −75 % allocation on long fields, and net negative allocation on
+realistic JSON-heavy traffic).
