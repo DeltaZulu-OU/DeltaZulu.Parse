@@ -336,9 +336,13 @@ and running the real C library)
 
 ### Audit findings
 
-- **`ln_inherittedCtx`** (clone a context's behavior-controlling options
-  without cloning its rules) has no C# equivalent at all — not mentioned
-  anywhere.
+- ~~`ln_inherittedCtx`~~ — checked and retracted: it's declared in
+  `liblognorm.h:126` but has **no implementation anywhere in the C source
+  tree** for the v2 engine; calling it from external code would fail to
+  link. The only real, working implementation is the internal
+  `ln_v1_inherittedCtx` (`v1_liblognorm.c`), used solely by the v1 engine's
+  custom-type descent parser — already out of scope. Not a gap; nothing to
+  port.
 - A narrow, currently-unreachable-in-practice `annotate=` ordering edge case:
   if a single `annotate=` line has *multiple* `+field=value` ops **and** the
   same tag is also annotated by a separate, later `annotate=` line, C's
