@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DeltaZulu.Normalize\DeltaZulu.Normalize.csproj" />
+    <ProjectReference Include="..\..\src\DeltaZulu.Normalize.PatternMining\DeltaZulu.Normalize.PatternMining.csproj" />
   </ItemGroup>
 
 </Project>
