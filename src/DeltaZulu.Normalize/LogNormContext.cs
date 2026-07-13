@@ -131,6 +131,20 @@ public sealed class LogNormContext
         => Normalizer.Normalize(this, EnsureCompiled(), message, out result);
 
     /// <summary>
+    /// Normalize a message into a flat <see cref="NormalizeResult"/> whose
+    /// string values are zero-copy slices of <paramref name="message"/>;
+    /// JsonObject/JSON text are produced from it on demand. Prefer this
+    /// overload on hot paths that only read a few fields or serialize the
+    /// result straight to JSON text.
+    /// </summary>
+    public int Normalize(string message, out NormalizeResult result)
+    {
+        var r = Normalizer.Normalize(this, EnsureCompiled(), message, out FieldCollector fields);
+        result = new NormalizeResult(r, fields);
+        return r;
+    }
+
+    /// <summary>
     /// Total node-visit and backtrack counts accumulated by normalization.
     /// Requires <see cref="LogNormOptions.CollectStats"/> (set before first
     /// use); returns zeros otherwise. Counters restart when a rulebase load
@@ -158,11 +172,15 @@ public sealed class LogNormContext
         return (called, backtracked);
     }
 
-    /// <summary>Convenience wrapper returning the result as a JSON string.</summary>
+    /// <summary>
+    /// Convenience wrapper returning the result as a JSON string. Serializes
+    /// straight from the flat result, so no intermediate JsonObject or
+    /// per-field strings are allocated.
+    /// </summary>
     public int NormalizeToString(string message, out string json)
     {
-        var r = Normalize(message, out var obj);
-        json = JsonText.ToCompactString(obj);
+        var r = Normalize(message, out NormalizeResult result);
+        json = result.ToJsonString();
         return r;
     }
 

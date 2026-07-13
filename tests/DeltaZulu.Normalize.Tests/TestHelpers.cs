@@ -14,7 +14,7 @@ internal static class TestHelpers
         var loadResult = ctx.LoadSamplesFromString(rulebaseBody);
         Assert.IsTrue(loadResult == 0, $"rulebase failed to load: {string.Join("; ", errors)}");
 
-        var r = ctx.Normalize(message, out var json);
+        var r = ctx.Normalize(message, out JsonObject json);
         return (r, json);
     }
 

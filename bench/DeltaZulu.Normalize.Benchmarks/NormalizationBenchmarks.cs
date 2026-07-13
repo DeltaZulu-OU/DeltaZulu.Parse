@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using System.Collections.Concurrent;
 using BenchmarkDotNet.Attributes;
 
@@ -44,7 +45,7 @@ public class NormalizationBenchmarks
     {
         foreach (var msg in messages)
         {
-            var matched = ctx.Normalize(msg, out _) == 0;
+            var matched = ctx.Normalize(msg, out JsonObject _) == 0;
             if (matched != shouldMatch)
             {
                 throw new InvalidOperationException(
@@ -70,7 +71,7 @@ public class NormalizationBenchmarks
         var r = 0;
         foreach (var msg in messages)
         {
-            r += ctx.Normalize(msg, out _);
+            r += ctx.Normalize(msg, out JsonObject _);
         }
 
         return r;
@@ -125,7 +126,7 @@ public class ConcurrentBenchmarks
             _messages[i] = match[i % match.Length];
         }
 
-        _ctx.Normalize(_messages[0], out _);
+        _ctx.Normalize(_messages[0], out JsonObject _);
     }
 
     [Benchmark(OperationsPerInvoke = MessagesPerInvoke)]
@@ -143,7 +144,7 @@ public class ConcurrentBenchmarks
         range => {
             for (var i = range.Item1; i < range.Item2; i++)
             {
-                _ctx.Normalize(_messages[i], out _);
+                _ctx.Normalize(_messages[i], out JsonObject _);
             }
         });
     }
@@ -153,7 +154,7 @@ public class ConcurrentBenchmarks
     {
         for (var i = 0; i < MessagesPerInvoke; i++)
         {
-            _ctx.Normalize(_messages[i], out _);
+            _ctx.Normalize(_messages[i], out JsonObject _);
         }
     }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using BenchmarkDotNet.Attributes;
 
 namespace DeltaZulu.Normalize.Benchmarks;
@@ -44,7 +45,7 @@ public class LongFieldBenchmarks
         foreach ((var msg, var name) in new[]
                  { (_charToMsg, "char-to"), (_wordMsg, "word"), (_quotedMsg, "quoted"), (_literalMsg, "literal") })
         {
-            if (_ctx.Normalize(msg, out _) != 0)
+            if (_ctx.Normalize(msg, out JsonObject _) != 0)
             {
                 throw new InvalidOperationException($"corpus error: {name} message does not match");
             }
@@ -52,14 +53,14 @@ public class LongFieldBenchmarks
     }
 
     [Benchmark]
-    public int LongCharTo() => _ctx.Normalize(_charToMsg, out _);
+    public int LongCharTo() => _ctx.Normalize(_charToMsg, out JsonObject _);
 
     [Benchmark]
-    public int LongWord() => _ctx.Normalize(_wordMsg, out _);
+    public int LongWord() => _ctx.Normalize(_wordMsg, out JsonObject _);
 
     [Benchmark]
-    public int LongQuoted() => _ctx.Normalize(_quotedMsg, out _);
+    public int LongQuoted() => _ctx.Normalize(_quotedMsg, out JsonObject _);
 
     [Benchmark]
-    public int LongLiteral() => _ctx.Normalize(_literalMsg, out _);
+    public int LongLiteral() => _ctx.Normalize(_literalMsg, out JsonObject _);
 }
