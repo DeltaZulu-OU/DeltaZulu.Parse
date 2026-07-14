@@ -24,6 +24,24 @@ public class LogClusterMinerTests
     }
 
     [TestMethod]
+    public void Mine_CustomScoreWeightsChangeTheTotalScore()
+    {
+        var records = new[] {
+            new LogRecord(1, "Interface Ethernet 1 down at node node1", "test"),
+            new LogRecord(2, "Interface Ethernet 1 down at node node2", "test"),
+        };
+
+        var defaultOptions = LogClusterOptions.Parse(["--min-support", "2"]);
+        var customOptions = LogClusterOptions.Parse(["--min-support", "2", "--weight-support", "1", "--weight-anchor", "0", "--weight-gaps", "0", "--weight-specificity", "0"]);
+
+        var defaultScore = new LogClusterMiner(defaultOptions).Mine(records).Candidates.Single().Score;
+        var customScore = new LogClusterMiner(customOptions).Mine(records).Candidates.Single().Score;
+
+        Assert.AreNotEqual(defaultScore.Total, customScore.Total);
+        Assert.AreEqual(customScore.Support, customScore.Total, 0.001);
+    }
+
+    [TestMethod]
     public void Mine_MaterializeAndStreamStrategiesProduceIdenticalOutput()
     {
         var records = new[] {

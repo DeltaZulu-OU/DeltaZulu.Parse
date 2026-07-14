@@ -167,21 +167,6 @@ internal sealed record CandidateOutput(int Support, double Specificity, string L
 internal sealed record GapOutput(int MinWords, int MaxWords, int Observations, IReadOnlyList<string> Samples, string? SuggestedParser, double ParserConfidence);
 internal sealed record CandidateScore(double Total, double Support, double AnchorQuality, double GapConsistency, double PatternSpecificity);
 
-
-// Tracks the whitespace actually observed at one anchor boundary across matching records, so
-// rendering can reproduce a delimiter other than a single ASCII space (e.g. CSV/pipe-separated
-// logs) instead of always rejoining with ' '.
-internal sealed class SeparatorStats
-{
-    private readonly Dictionary<string, int> _votes = new(StringComparer.Ordinal);
-
-    public void Observe(string separator) => _votes[separator] = _votes.GetValueOrDefault(separator) + 1;
-
-    public string Modal() => _votes.Count == 0
-        ? " "
-        : _votes.OrderByDescending(v => v.Value).ThenBy(v => v.Key, StringComparer.Ordinal).First().Key;
-}
-
 internal sealed class LogClusterMiner(LogClusterOptions options)
 {
     // Reused for both strategies: "materialize" runs this once and caches the array; "stream"
@@ -218,7 +203,7 @@ internal sealed class LogClusterMiner(LogClusterOptions options)
 
         CollectEvidence(tokenizedPass(), frequentWords, candidates, dictionary, routes);
 
-        var outputs = survivors.Select(c => c.ToOutput(recordCount, dictionary))
+        var outputs = survivors.Select(c => c.ToOutput(recordCount, dictionary, options))
             .OrderByDescending(c => c.Score.Total)
             .ThenByDescending(c => c.Support)
             .ThenByDescending(c => c.Specificity)
@@ -444,11 +429,11 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
     // instead of treating them as anchors.
     public CandidateKey ReducedKey(bool dropFirst) => new(dropFirst ? anchors.AsSpan(1) : anchors.AsSpan(0, anchors.Length - 1));
 
-    public CandidateOutput ToOutput(int recordCount, TokenDictionary dictionary)
+    public CandidateOutput ToOutput(int recordCount, TokenDictionary dictionary, LogClusterOptions options)
     {
         var renderedGaps = _gaps.Select(g => g.ToOutput()).ToArray();
         var separators = _separators.Select(s => s.Modal()).ToArray();
-        var score = CandidateScorer.Score(Support, recordCount, anchors.Length, renderedGaps);
+        var score = CandidateScorer.Score(Support, recordCount, anchors.Length, renderedGaps, options.WeightSupport, options.WeightAnchor, options.WeightGapConsistency, options.WeightSpecificity);
         var specificity = anchors.Length / (double)Math.Max(1, anchors.Length + renderedGaps.Count(g => g.MaxWords > 0));
         return new CandidateOutput(
             Support,
@@ -543,6 +528,20 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         warnings = ruleWarnings;
         return builder.ToString();
     }
+}
+
+// Tracks the whitespace actually observed at one anchor boundary across matching records, so
+// rendering can reproduce a delimiter other than a single ASCII space (e.g. CSV/pipe-separated
+// logs) instead of always rejoining with ' '.
+internal sealed class SeparatorStats
+{
+    private readonly Dictionary<string, int> _votes = new(StringComparer.Ordinal);
+
+    public string Modal() => _votes.Count == 0
+        ? " "
+        : _votes.OrderByDescending(v => v.Value).ThenBy(v => v.Key, StringComparer.Ordinal).First().Key;
+
+    public void Observe(string separator) => _votes[separator] = _votes.GetValueOrDefault(separator) + 1;
 }
 
 internal sealed class TokenDictionary
@@ -685,14 +684,18 @@ internal readonly record struct CandidateKey : IEquatable<CandidateKey>
 
 internal static class CandidateScorer
 {
-    public static CandidateScore Score(int support, int recordCount, int anchorCount, IReadOnlyList<GapOutput> gaps)
+    // Weights default to 0.35/0.30/0.20/0.15 (support/anchor/gaps/specificity), a fixed split
+    // with no published derivation; --weight-support/--weight-anchor/--weight-gaps/
+    // --weight-specificity let callers retune the mix for log types dissimilar to whatever
+    // informed those defaults, rather than silently trusting an unstated tuning.
+    public static CandidateScore Score(int support, int recordCount, int anchorCount, IReadOnlyList<GapOutput> gaps, double weightSupport, double weightAnchor, double weightGapConsistency, double weightSpecificity)
     {
         var supportStrength = Math.Min(100, 100.0 * Math.Log(1 + support) / Math.Log(1 + recordCount));
         var anchorQuality = Math.Min(100, anchorCount * 20.0);
         var variableGaps = gaps.Where(g => g.MaxWords > 0).ToArray();
         var gapConsistency = variableGaps.Length == 0 ? 100 : variableGaps.Average(g => g.MinWords == g.MaxWords ? 100 : 60 + (40.0 * g.MinWords / Math.Max(1, g.MaxWords)));
         var specificity = 100.0 * anchorCount / Math.Max(1, anchorCount + variableGaps.Length);
-        var total = (supportStrength * 0.35) + (anchorQuality * 0.30) + (gapConsistency * 0.20) + (specificity * 0.15);
+        var total = (supportStrength * weightSupport) + (anchorQuality * weightAnchor) + (gapConsistency * weightGapConsistency) + (specificity * weightSpecificity);
         return new CandidateScore(total, supportStrength, anchorQuality, gapConsistency, specificity);
     }
 }

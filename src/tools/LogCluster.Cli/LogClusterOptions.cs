@@ -10,6 +10,10 @@ internal sealed record LogClusterOptions
     public long MaxRecords { get; init; } = 5_000_000;
     public long MaxInputBytes { get; init; } = 2_147_483_648;
     public bool? ForceMaterialize { get; init; }
+    public double WeightSupport { get; init; } = 0.35;
+    public double WeightAnchor { get; init; } = 0.30;
+    public double WeightGapConsistency { get; init; } = 0.20;
+    public double WeightSpecificity { get; init; } = 0.15;
     public bool Json { get; init; }
     public bool Verbose { get; init; }
     public bool SkipEmpty { get; init; } = true;
@@ -85,6 +89,43 @@ internal sealed record LogClusterOptions
                 case "--keep-empty": options = options with { SkipEmpty = false }; break;
                 case "--materialize": options = options with { ForceMaterialize = true }; break;
                 case "--stream": options = options with { ForceMaterialize = false }; break;
+
+                case "--weight-support":
+                    if (++i >= args.Length || !double.TryParse(args[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var weightSupport) || weightSupport < 0)
+                    {
+                        return options with { Error = "support weight must be a non-negative number" };
+                    }
+
+                    options = options with { WeightSupport = weightSupport };
+                    break;
+
+                case "--weight-anchor":
+                    if (++i >= args.Length || !double.TryParse(args[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var weightAnchor) || weightAnchor < 0)
+                    {
+                        return options with { Error = "anchor weight must be a non-negative number" };
+                    }
+
+                    options = options with { WeightAnchor = weightAnchor };
+                    break;
+
+                case "--weight-gaps":
+                    if (++i >= args.Length || !double.TryParse(args[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var weightGaps) || weightGaps < 0)
+                    {
+                        return options with { Error = "gap consistency weight must be a non-negative number" };
+                    }
+
+                    options = options with { WeightGapConsistency = weightGaps };
+                    break;
+
+                case "--weight-specificity":
+                    if (++i >= args.Length || !double.TryParse(args[i], NumberStyles.Float, CultureInfo.InvariantCulture, out var weightSpecificity) || weightSpecificity < 0)
+                    {
+                        return options with { Error = "specificity weight must be a non-negative number" };
+                    }
+
+                    options = options with { WeightSpecificity = weightSpecificity };
+                    break;
+
                 default:
                     if (args[i].StartsWith('-'))
                     {
@@ -111,6 +152,10 @@ internal sealed record LogClusterOptions
               --max-input-bytes <n> abort if input exceeds this many bytes (default: 2147483648)
               --materialize         force loading all records into memory (skip the streaming heuristic)
               --stream              force the re-read-from-disk streaming strategy
+              --weight-support <n>     score weight for support strength (default: 0.35)
+              --weight-anchor <n>      score weight for anchor quality (default: 0.30)
+              --weight-gaps <n>        score weight for gap consistency (default: 0.20)
+              --weight-specificity <n> score weight for pattern specificity (default: 0.15)
           -m, --message <text>      mine one message supplied on the command line
               --json                emit JSON instead of text
           -v, --verbose             print gap samples and parser confidence
