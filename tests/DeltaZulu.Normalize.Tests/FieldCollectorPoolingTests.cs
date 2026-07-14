@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace DeltaZulu.Normalize.Tests;
 

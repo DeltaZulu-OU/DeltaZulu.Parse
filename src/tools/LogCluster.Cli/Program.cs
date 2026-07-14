@@ -105,9 +105,17 @@ namespace LogCluster.Cli
                     Console.WriteLine($"Score {candidate.Score.Total:F1}  Support {candidate.Support}  Specificity {candidate.Specificity:F2}");
                     Console.WriteLine($"  LogCluster: {candidate.LogClusterPattern}");
                     Console.WriteLine($"  Rule:       {candidate.LiblognormRule}");
+                    if (!candidate.IsExecutableRule)
+                    {
+                        Console.WriteLine("  Rule note:  structural sketch only; unresolved internal gaps make this non-executable as a liblognorm rule.");
+                    }
                     Console.WriteLine($"  Score parts support={candidate.Score.Support:F1}, anchors={candidate.Score.AnchorQuality:F1}, gaps={candidate.Score.GapConsistency:F1}, specificity={candidate.Score.PatternSpecificity:F1}");
                     if (options.Verbose)
                     {
+                        foreach (var warning in candidate.RuleWarnings)
+                        {
+                            Console.WriteLine($"  Warning: {warning}");
+                        }
                         for (var i = 0; i < candidate.Gaps.Count; i++)
                         {
                             var gap = candidate.Gaps[i];

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading;
 using System.Text.Json.Nodes;
 
 namespace DeltaZulu.Normalize;
@@ -276,7 +277,7 @@ internal static class Normalizer
 
         if (snap.StatsCalled is { } statsCalled)
         {
-            statsCalled[nodeIdx]++;
+            Interlocked.Increment(ref statsCalled[nodeIdx]);
         }
 
         var edgeEnd = node.EdgeStart + node.EdgeCount;
@@ -343,7 +344,7 @@ internal static class Normalizer
                 }
                 else if (snap.StatsBacktracked is { } statsBacktracked)
                 {
-                    statsBacktracked[nodeIdx]++;
+                    Interlocked.Increment(ref statsBacktracked[nodeIdx]);
                 }
             }
             value = default; /* discard any uncommitted extraction */

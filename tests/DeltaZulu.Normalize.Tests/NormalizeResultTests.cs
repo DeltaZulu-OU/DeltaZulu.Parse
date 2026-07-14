@@ -2,7 +2,6 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace DeltaZulu.Normalize.Tests;
 
@@ -157,4 +156,26 @@ public class NormalizeResultTests
         Assert.AreEqual(1, obj["fields"]!["a"]!.GetValue<int>());
         Assert.IsTrue(obj["fields"]!["b"]![0]!.GetValue<bool>());
     }
+
+    [TestMethod]
+    public void Serialization_UsesMaterializedSnapshotAfterMutation()
+    {
+        var ctx = Load("rule=:hello %first:word% %second:word%");
+        ctx.Normalize("hello foo bar", out NormalizeResult result);
+
+        var obj = result.ToJsonObject();
+        obj["first"] = "modified";
+
+        Assert.AreEqual("modified", result.GetValue("first")!.GetValue<string>());
+        Assert.AreEqual("{\"second\":\"bar\",\"first\":\"modified\"}", result.ToJsonString());
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, JsonText.CompactWriterOptions))
+        {
+            result.WriteTo(writer);
+        }
+
+        Assert.AreEqual(result.ToJsonString(), Encoding.UTF8.GetString(buffer.WrittenSpan));
+    }
+
 }

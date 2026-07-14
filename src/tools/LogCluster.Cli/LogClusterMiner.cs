@@ -7,7 +7,7 @@ namespace LogCluster.Cli;
 
 internal sealed record LogRecord(long SequenceNumber, string Message, string? Source);
 internal sealed record MiningResult(int RecordCount, IReadOnlyList<CandidateOutput> Candidates);
-internal sealed record CandidateOutput(int Support, double Specificity, string LogClusterPattern, string LiblognormRule, IReadOnlyList<GapOutput> Gaps, CandidateScore Score);
+internal sealed record CandidateOutput(int Support, double Specificity, string LogClusterPattern, string LiblognormRule, bool IsExecutableRule, IReadOnlyList<string> RuleWarnings, IReadOnlyList<GapOutput> Gaps, CandidateScore Score);
 internal sealed record GapOutput(int MinWords, int MaxWords, int Observations, IReadOnlyList<string> Samples, string? SuggestedParser, double ParserConfidence);
 internal sealed record CandidateScore(double Total, double Support, double AnchorQuality, double GapConsistency, double PatternSpecificity);
 
@@ -310,7 +310,9 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
             Support,
             specificity,
             RenderLogCluster(anchors, renderedGaps, dictionary),
-            RenderRule(anchors, renderedGaps, dictionary),
+            RenderRule(anchors, renderedGaps, dictionary, out var isExecutableRule, out var ruleWarnings),
+            isExecutableRule,
+            ruleWarnings,
             renderedGaps,
             score);
     }
@@ -323,19 +325,26 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         }
     }
 
-    private static void AddRuleGap(List<string> parts, GapOutput gap, ref int field)
+    private static void AddRuleGap(List<string> parts, GapOutput gap, bool isTrailing, ref int field, List<string> warnings)
     {
         if (gap.MaxWords == 0)
         {
             return;
         }
 
-        // liblognorm field selectors are mandatory matches with no optional syntax; when MinWords == 0 the
-        // gap may legitimately be absent, so a strict/single-word parser would reject those records. `rest`
-        // is the closest best-effort approximation liblognorm offers for a possibly-empty span.
-        var parser = gap.MinWords == 0
-            ? LiblognormMotifs.Rest
-            : gap.SuggestedParser ?? (gap.MaxWords == 1 ? LiblognormMotifs.Word : LiblognormMotifs.Rest);
+        if (!isTrailing && (gap.MinWords == 0 || gap.MaxWords > 1 || string.IsNullOrEmpty(gap.SuggestedParser)))
+        {
+            parts.Add($"/* unresolved gap: {gap.MinWords}-{gap.MaxWords} words */");
+            warnings.Add($"Internal gap {field} spans {gap.MinWords}-{gap.MaxWords} words and cannot be rendered as an executable liblognorm parser.");
+            return;
+        }
+
+        var parser = gap.SuggestedParser ?? (gap.MaxWords == 1 ? LiblognormMotifs.Word : LiblognormMotifs.Rest);
+        if (isTrailing && (gap.MinWords == 0 || gap.MaxWords > 1))
+        {
+            parser = LiblognormMotifs.Rest;
+        }
+
         parts.Add($"%field{field++}:{parser}%");
     }
 
@@ -355,16 +364,19 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         return string.Join(' ', parts);
     }
 
-    private static string RenderRule(int[] anchors, GapOutput[] gaps, TokenDictionary dictionary)
+    private static string RenderRule(int[] anchors, GapOutput[] gaps, TokenDictionary dictionary, out bool isExecutable, out IReadOnlyList<string> warnings)
     {
         var parts = new List<string>(anchors.Length + gaps.Length);
+        var ruleWarnings = new List<string>();
         var field = 1;
         for (var i = 0; i < anchors.Length; i++)
         {
-            AddRuleGap(parts, gaps[i], ref field);
+            AddRuleGap(parts, gaps[i], isTrailing: false, ref field, ruleWarnings);
             parts.Add(EscapeLiteral(dictionary[anchors[i]]));
         }
-        AddRuleGap(parts, gaps[^1], ref field);
+        AddRuleGap(parts, gaps[^1], isTrailing: true, ref field, ruleWarnings);
+        isExecutable = ruleWarnings.Count == 0;
+        warnings = ruleWarnings;
         return string.Join(' ', parts);
     }
 }

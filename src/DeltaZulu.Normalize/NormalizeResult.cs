@@ -80,7 +80,16 @@ public sealed class NormalizeResult
     public JsonObject ToJsonObject() => _materialized ??= _fields.ToJsonObject();
 
     /// <summary>Serialize the result, writing slice-backed values straight from the input message.</summary>
-    public void WriteTo(Utf8JsonWriter writer) => _fields.WriteTo(writer);
+    public void WriteTo(Utf8JsonWriter writer)
+    {
+        if (_materialized is not null)
+        {
+            _materialized.WriteTo(writer);
+            return;
+        }
+
+        _fields.WriteTo(writer);
+    }
 
     /// <summary>Compact JSON text (same format as <see cref="LogNormContext.NormalizeToString"/>).</summary>
     public string ToJsonString()
@@ -88,7 +97,7 @@ public sealed class NormalizeResult
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, JsonText.CompactWriterOptions))
         {
-            _fields.WriteTo(writer);
+            WriteTo(writer);
         }
 
         return Encoding.UTF8.GetString(buffer.WrittenSpan);

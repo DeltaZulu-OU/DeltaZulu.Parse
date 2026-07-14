@@ -1,4 +1,3 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using static DeltaZulu.Normalize.Tests.TestHelpers;
 
 namespace DeltaZulu.Normalize.Tests;
