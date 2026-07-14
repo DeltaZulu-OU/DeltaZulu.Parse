@@ -21,22 +21,65 @@ namespace LogCluster.Cli
                 return 1;
             }
 
-            var result = new LogClusterMiner(options).Mine(ReadRecords(options));
-            if (result.RecordCount == 0)
+            // LogClusterMiner.Mine needs to re-enumerate its record source multiple times (see the
+            // ARCHITECTURE NOTE on LogClusterMiner): once per mining pass. Calling the local
+            // `ReadRecords` function fresh for each pass gives it a brand-new iterator that
+            // re-opens files from disk, so it never needs to buffer the corpus itself. Stdin is
+            // the one source that cannot be re-read (a console/pipe stream is single-use), so it
+            // is spooled to a temp file up front and then replayed from disk like any other file
+            // input — this is the same limitation logcluster.pl's own stdin handling has (its `-`
+            // dup of STDIN cannot be re-read across passes either), just made explicit instead of
+            // silently returning zero records on the 2nd/3rd pass.
+            string? stdinSpoolPath = null;
+            try
             {
-                Console.Error.WriteLine("error: no input messages were provided");
-                return 1;
+                Func<IEnumerable<LogRecord>> recordSource;
+                if (options.Message is null && options.Inputs.Count == 0)
+                {
+                    stdinSpoolPath = SpoolStdin();
+                    recordSource = () => ReadFile(stdinSpoolPath, new SequenceCounter(), options.SkipEmpty, "stdin");
+                }
+                else
+                {
+                    recordSource = () => ReadRecords(options);
+                }
+
+                var result = new LogClusterMiner(options).Mine(recordSource);
+                if (result.RecordCount == 0)
+                {
+                    Console.Error.WriteLine("error: no input messages were provided");
+                    return 1;
+                }
+                if (options.Json)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(result.Candidates, jsonOpts));
+                }
+                else
+                {
+                    PrintText(result, options);
+                }
+
+                return 0;
             }
-            if (options.Json)
+            finally
             {
-                Console.WriteLine(JsonSerializer.Serialize(result.Candidates, jsonOpts));
-            }
-            else
-            {
-                PrintText(result, options);
+                if (stdinSpoolPath is not null)
+                {
+                    File.Delete(stdinSpoolPath);
+                }
             }
 
-            return 0;
+            static string SpoolStdin()
+            {
+                var path = Path.Combine(Path.GetTempPath(), $"logcluster-stdin-{Guid.NewGuid():N}.tmp");
+                using var writer = new StreamWriter(path);
+                string? line;
+                while ((line = Console.In.ReadLine()) is not null)
+                {
+                    writer.WriteLine(line);
+                }
+                return path;
+            }
 
             static IEnumerable<LogRecord> ReadRecords(LogClusterOptions options)
             {
@@ -47,26 +90,13 @@ namespace LogCluster.Cli
                     yield break;
                 }
 
-                if (options.Inputs.Count == 0)
-                {
-                    string? line;
-                    while ((line = Console.In.ReadLine()) is not null)
-                    {
-                        if (line.Length != 0 || !options.SkipEmpty)
-                        {
-                            yield return new LogRecord(sequence.Next(), line, "stdin");
-                        }
-                    }
-                    yield break;
-                }
-
                 foreach (var input in options.Inputs)
                 {
                     if (Directory.Exists(input))
                     {
                         foreach (var file in Directory.EnumerateFiles(input, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
                         {
-                            foreach (var record in ReadFile(file, sequence, options.SkipEmpty))
+                            foreach (var record in ReadFile(file, sequence, options.SkipEmpty, file))
                             {
                                 yield return record;
                             }
@@ -74,7 +104,7 @@ namespace LogCluster.Cli
                     }
                     else
                     {
-                        foreach (var record in ReadFile(input, sequence, options.SkipEmpty))
+                        foreach (var record in ReadFile(input, sequence, options.SkipEmpty, input))
                         {
                             yield return record;
                         }
@@ -82,7 +112,7 @@ namespace LogCluster.Cli
                 }
             }
 
-            static IEnumerable<LogRecord> ReadFile(string path, SequenceCounter sequence, bool skipEmpty)
+            static IEnumerable<LogRecord> ReadFile(string path, SequenceCounter sequence, bool skipEmpty, string sourceLabel)
             {
                 using var reader = File.OpenText(path);
                 string? line;
@@ -90,7 +120,7 @@ namespace LogCluster.Cli
                 {
                     if (line.Length != 0 || !skipEmpty)
                     {
-                        yield return new LogRecord(sequence.Next(), line, path);
+                        yield return new LogRecord(sequence.Next(), line, sourceLabel);
                     }
                 }
             }
@@ -105,17 +135,9 @@ namespace LogCluster.Cli
                     Console.WriteLine($"Score {candidate.Score.Total:F1}  Support {candidate.Support}  Specificity {candidate.Specificity:F2}");
                     Console.WriteLine($"  LogCluster: {candidate.LogClusterPattern}");
                     Console.WriteLine($"  Rule:       {candidate.LiblognormRule}");
-                    if (!candidate.IsExecutableRule)
-                    {
-                        Console.WriteLine("  Rule note:  structural sketch only; unresolved internal gaps make this non-executable as a liblognorm rule.");
-                    }
                     Console.WriteLine($"  Score parts support={candidate.Score.Support:F1}, anchors={candidate.Score.AnchorQuality:F1}, gaps={candidate.Score.GapConsistency:F1}, specificity={candidate.Score.PatternSpecificity:F1}");
                     if (options.Verbose)
                     {
-                        foreach (var warning in candidate.RuleWarnings)
-                        {
-                            Console.WriteLine($"  Warning: {warning}");
-                        }
                         for (var i = 0; i < candidate.Gaps.Count; i++)
                         {
                             var gap = candidate.Gaps[i];
