@@ -7,20 +7,6 @@ namespace LogCluster.Cli;
 
 internal sealed record LogRecord(long SequenceNumber, string Message, string? Source);
 
-internal sealed class LogClusterInputTooLargeException(string message) : Exception(message);
-internal sealed record MiningResult(int RecordCount, IReadOnlyList<CandidateOutput> Candidates);
-internal sealed record CandidateOutput(
-    int Support,
-    double Specificity,
-    string LogClusterPattern,
-    string LiblognormRule,
-    IReadOnlyList<GapOutput> Gaps,
-    CandidateScore Score,
-    bool IsExecutableRule,
-    IReadOnlyList<string> RuleWarnings);
-internal sealed record GapOutput(int MinWords, int MaxWords, int Observations, IReadOnlyList<string> Samples, string? SuggestedParser, double ParserConfidence);
-internal sealed record CandidateScore(double Total, double Support, double AnchorQuality, double GapConsistency, double PatternSpecificity);
-
 internal static class AnchorBuffer
 {
     public static int[] From(ReadOnlySpan<int> tokens, ReadOnlySpan<bool> frequentWords)
@@ -130,39 +116,6 @@ internal static partial class LiblognormMotifs
     private static partial Regex WordPattern();
 }
 
-// Stateless on purpose: each mining pass re-tokenizes every record from the raw message
-// instead of consulting a stored token array, so no pass needs to keep the whole corpus's
-// tokens resident at once (see the ARCHITECTURE NOTE on LogClusterMiner). A per-record token
-// array is still allocated here, but it is scoped to that single record's processing and is
-// immediately collectible afterward — unlike a corpus-wide `TokenizedRecord[]` would be.
-internal static class Tokenizer
-{
-    // Word boundaries collapse any run of whitespace (tabs, repeated spaces, ...) into a single split point;
-    // the original separator width is discarded. RenderRule compensates with the `whitespace` motif, but
-    // the human-readable LogClusterPattern is display-only and always rejoins with a single ASCII space.
-    public static int[] Tokenize(string message, TokenDictionary dictionary)
-    {
-        var tokens = new List<int>();
-        var start = -1;
-        for (var i = 0; i <= message.Length; i++)
-        {
-            if (i < message.Length && !char.IsWhiteSpace(message[i]))
-            {
-                if (start < 0)
-                {
-                    start = i;
-                }
-            }
-            else if (start >= 0)
-            {
-                tokens.Add(dictionary.GetOrAdd(message, start, i - start));
-                start = -1;
-            }
-        }
-        return tokens.ToArray();
-    }
-}
-
 internal sealed class GapStatistics(int maxSamples)
 {
     private readonly Dictionary<string, int> _parserVotes = new(StringComparer.Ordinal);
@@ -207,44 +160,46 @@ internal sealed class GapStatistics(int maxSamples)
     }
 }
 
-// ARCHITECTURE NOTE (do not "simplify" this back to a single buffered pass): mining needs
-// three independent passes over the corpus (word frequency, candidate support, gap evidence),
-// each depending on the previous one's output. The original logcluster.pl (Vaarandi) gets this
-// for O(vocabulary + patterns) memory by re-opening and re-streaming the input file from disk
-// for every pass (see find_frequent_words/find_candidates in logcluster.pl) instead of holding
-// the whole tokenized corpus in RAM between passes. This class mirrors that: `recordSource` is
-// invoked once per pass and must yield the identical records, in the identical order, every
-// time it's called — the mutable state that persists across passes is only the shared
-// TokenDictionary, the frequent-word table, and the candidate table, all of which are bounded
-// by vocabulary/pattern cardinality rather than by input size. Do not replace the factory with
-// a single materialized `IEnumerable<LogRecord>`/array reused across passes: that is exactly
-// the full-corpus-retention design this was changed away from (it was flagged as an OOM risk
-// for large log files, since MaxCandidates only trims the final output, not the working set).
+internal sealed class LogClusterInputTooLargeException(string message) : Exception(message);
+
+internal sealed record MiningResult(int RecordCount, IReadOnlyList<CandidateOutput> Candidates, string Strategy);
+internal sealed record CandidateOutput(int Support, double Specificity, string LogClusterPattern, string LiblognormRule, bool IsExecutableRule, IReadOnlyList<string> RuleWarnings, IReadOnlyList<GapOutput> Gaps, CandidateScore Score);
+internal sealed record GapOutput(int MinWords, int MaxWords, int Observations, IReadOnlyList<string> Samples, string? SuggestedParser, double ParserConfidence);
+internal sealed record CandidateScore(double Total, double Support, double AnchorQuality, double GapConsistency, double PatternSpecificity);
+
 internal sealed class LogClusterMiner(LogClusterOptions options)
 {
-    public MiningResult Mine(IEnumerable<LogRecord> records) => Mine(() => records);
+    // Reused for both strategies: "materialize" runs this once and caches the array; "stream"
+    // re-invokes it (and re-tokenizes) once per pass, trading CPU for not holding every record
+    // in memory at once. The two strategies differ only in whether tokenizedPass() below is
+    // backed by a cached array or a fresh re-enumeration of recordSource().
+    public MiningResult Mine(IEnumerable<LogRecord> records) => Mine(() => records, estimatedInputBytes: null);
 
-    public MiningResult Mine(Func<IEnumerable<LogRecord>> recordSource)
+    public MiningResult Mine(Func<IEnumerable<LogRecord>> recordSource, long? estimatedInputBytes)
     {
         var dictionary = new TokenDictionary();
-        IEnumerable<LogRecord> GuardedSource() => GuardInputSize(recordSource());
+        var streaming = ShouldStream(estimatedInputBytes, options);
 
-        // Pass 1 (mirrors find_frequent_words): tokenize each record against the shared
-        // dictionary and count, per token, how many distinct records contain it.
-        var frequentWords = DiscoverFrequentWords(GuardedSource(), dictionary, out var recordCount);
+        Func<IEnumerable<TokenizedRecord>> tokenizedPass;
+        if (streaming)
+        {
+            tokenizedPass = () => TokenizedRecord.Stream(recordSource(), dictionary, options.MaxRecords, options.MaxInputBytes);
+        }
+        else
+        {
+            var materialized = TokenizedRecord.Stream(recordSource(), dictionary, options.MaxRecords, options.MaxInputBytes).ToArray();
+            tokenizedPass = () => materialized;
+        }
 
-        // Pass 2 (mirrors find_candidates' first half): re-tokenize fresh and group records by
-        // their frequent-word anchor sequence, counting support per distinct sequence.
-        var candidates = GenerateCandidates(GuardedSource(), dictionary, frequentWords);
+        var (frequentWords, recordCount) = DiscoverFrequentWords(tokenizedPass());
+        var candidates = GenerateCandidates(tokenizedPass(), frequentWords);
         var survivors = candidates.Values.Where(c => c.Support >= options.MinSupport).ToArray();
         foreach (var candidate in survivors)
         {
             candidate.InitializeGaps(options.MaxSamplesPerGap);
         }
 
-        // Pass 3 (mirrors find_candidates' Vars tracking): re-tokenize once more to collect
-        // bounded gap evidence, but only for candidates that survived the support threshold.
-        CollectEvidence(GuardedSource(), dictionary, frequentWords, candidates);
+        CollectEvidence(tokenizedPass(), frequentWords, candidates, dictionary);
 
         var outputs = survivors.Select(c => c.ToOutput(recordCount, dictionary))
             .OrderByDescending(c => c.Score.Total)
@@ -253,15 +208,42 @@ internal sealed class LogClusterMiner(LogClusterOptions options)
             .ThenBy(c => c.LogClusterPattern, StringComparer.Ordinal)
             .Take(options.MaxCandidates)
             .ToArray();
-        return new MiningResult(recordCount, outputs);
+        return new MiningResult(recordCount, outputs, streaming ? "stream" : "materialize");
     }
 
-    private static void CollectEvidence(IEnumerable<LogRecord> records, TokenDictionary dictionary, bool[] frequentWords, Dictionary<CandidateKey, PatternCandidate> candidates)
+    // Picks the strategy once, before mining starts. Below the safety margin, holding every
+    // tokenized record in memory is simpler and faster than re-reading from disk three times;
+    // above it, streaming trades CPU (re-tokenizing each pass) for a memory ceiling set by the
+    // still-finite TokenDictionary/candidate structures rather than by recordCount record count.
+    internal static bool ShouldStream(long? estimatedInputBytes, LogClusterOptions options)
+    {
+        if (options.ForceMaterialize is { } forced)
+        {
+            return !forced;
+        }
+
+        if (estimatedInputBytes is not { } bytes)
+        {
+            return false;
+        }
+
+        var headroom = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+        if (headroom <= 0)
+        {
+            headroom = options.MaxInputBytes;
+        }
+
+        const double tokenizedOverheadFactor = 6.0; // int[] tokens + dictionary entries + candidate bookkeeping vs. raw bytes
+        const double safetyMargin = 0.5;
+        var estimatedMemoryUsage = bytes * tokenizedOverheadFactor;
+        return estimatedMemoryUsage > headroom * safetyMargin;
+    }
+
+    private static void CollectEvidence(IEnumerable<TokenizedRecord> records, bool[] frequentWords, Dictionary<CandidateKey, PatternCandidate> candidates, TokenDictionary dictionary)
     {
         foreach (var record in records)
         {
-            var tokens = Tokenizer.Tokenize(record.Message, dictionary);
-            var anchors = AnchorBuffer.From(tokens, frequentWords);
+            var anchors = AnchorBuffer.From(record.Tokens, frequentWords);
             if (anchors.Length == 0)
             {
                 continue;
@@ -272,17 +254,16 @@ internal sealed class LogClusterMiner(LogClusterOptions options)
                 continue;
             }
 
-            candidate.ObserveGaps(tokens, frequentWords, dictionary);
+            candidate.ObserveGaps(record.Tokens, frequentWords, dictionary);
         }
     }
 
-    private static Dictionary<CandidateKey, PatternCandidate> GenerateCandidates(IEnumerable<LogRecord> records, TokenDictionary dictionary, bool[] frequentWords)
+    private static Dictionary<CandidateKey, PatternCandidate> GenerateCandidates(IEnumerable<TokenizedRecord> records, bool[] frequentWords)
     {
         var candidates = new Dictionary<CandidateKey, PatternCandidate>();
         foreach (var record in records)
         {
-            var tokens = Tokenizer.Tokenize(record.Message, dictionary);
-            var anchors = AnchorBuffer.From(tokens, frequentWords);
+            var anchors = AnchorBuffer.From(record.Tokens, frequentWords);
             if (anchors.Length == 0)
             {
                 continue;
@@ -299,25 +280,25 @@ internal sealed class LogClusterMiner(LogClusterOptions options)
         return candidates;
     }
 
-    // The token dictionary is only complete once every record has been tokenized once, so the
-    // per-token counters below cannot be pre-sized like the later passes' `bool[] frequentWords`
-    // can — they grow alongside the dictionary as new words are discovered mid-pass.
-    private bool[] DiscoverFrequentWords(IEnumerable<LogRecord> records, TokenDictionary dictionary, out int recordCount)
+    private (bool[] Frequent, int RecordCount) DiscoverFrequentWords(IEnumerable<TokenizedRecord> records)
     {
+        // Sized lazily rather than up front: in the streaming strategy the dictionary is still
+        // growing as this same pass tokenizes records, so the final token universe isn't known
+        // until the pass completes.
         var counts = new List<int>();
         var seenStamp = new List<int>();
         var stamp = 0;
-        var total = 0;
+        var recordCount = 0;
         foreach (var record in records)
         {
-            total++;
+            recordCount++;
             stamp++;
-            foreach (var token in Tokenizer.Tokenize(record.Message, dictionary))
+            foreach (var token in record.Tokens)
             {
-                while (counts.Count <= token)
+                while (seenStamp.Count <= token)
                 {
-                    counts.Add(0);
                     seenStamp.Add(0);
+                    counts.Add(0);
                 }
 
                 if (seenStamp[token] == stamp)
@@ -330,33 +311,12 @@ internal sealed class LogClusterMiner(LogClusterOptions options)
             }
         }
 
-        recordCount = total;
-        var frequent = new bool[dictionary.Count];
+        var frequent = new bool[counts.Count];
         for (var token = 0; token < counts.Count; token++)
         {
             frequent[token] = counts[token] >= options.MinSupport;
         }
-        return frequent;
-    }
-
-    private IEnumerable<LogRecord> GuardInputSize(IEnumerable<LogRecord> records)
-    {
-        long count = 0;
-        long bytes = 0;
-        foreach (var record in records)
-        {
-            count++;
-            bytes += record.Message.Length;
-            if (count > options.MaxRecords)
-            {
-                throw new LogClusterInputTooLargeException($"input exceeds --max-records ({options.MaxRecords}); use a smaller input or increase the limit");
-            }
-            if (bytes > options.MaxInputBytes)
-            {
-                throw new LogClusterInputTooLargeException($"input exceeds --max-input-bytes ({options.MaxInputBytes}); use a smaller input or increase the limit");
-            }
-            yield return record;
-        }
+        return (frequent, recordCount);
     }
 }
 
@@ -416,8 +376,9 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
             Support,
             specificity,
             RenderLogCluster(anchors, renderedGaps, dictionary),
-            RenderRule(anchors, renderedGaps, dictionary),
-            renderedGaps,
+            RenderRule(anchors, renderedGaps, dictionary, out var isExecutableRule, out var ruleWarnings),
+            isExecutableRule,
+            ruleWarnings, renderedGaps,
             score);
     }
 
@@ -429,19 +390,26 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         }
     }
 
-    private static void AddRuleGap(List<string> parts, GapOutput gap, ref int field)
+    private static void AddRuleGap(List<string> parts, GapOutput gap, bool isTrailing, ref int field, List<string> warnings)
     {
         if (gap.MaxWords == 0)
         {
             return;
         }
 
-        // liblognorm field selectors are mandatory matches with no optional syntax; when MinWords == 0 the
-        // gap may legitimately be absent, so a strict/single-word parser would reject those records. `rest`
-        // is the closest best-effort approximation liblognorm offers for a possibly-empty span.
-        var parser = gap.MinWords == 0
-            ? LiblognormMotifs.Rest
-            : gap.SuggestedParser ?? (gap.MaxWords == 1 ? LiblognormMotifs.Word : LiblognormMotifs.Rest);
+        if (!isTrailing && (gap.MinWords == 0 || gap.MaxWords > 1 || string.IsNullOrEmpty(gap.SuggestedParser)))
+        {
+            parts.Add($"/* unresolved gap: {gap.MinWords}-{gap.MaxWords} words */");
+            warnings.Add($"Internal gap {field} spans {gap.MinWords}-{gap.MaxWords} words and cannot be rendered as an executable liblognorm parser.");
+            return;
+        }
+
+        var parser = gap.SuggestedParser ?? (gap.MaxWords == 1 ? LiblognormMotifs.Word : LiblognormMotifs.Rest);
+        if (isTrailing && (gap.MinWords == 0 || gap.MaxWords > 1))
+        {
+            parser = LiblognormMotifs.Rest;
+        }
+
         parts.Add($"%field{field++}:{parser}%");
     }
 
@@ -461,21 +429,22 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         return string.Join(' ', parts);
     }
 
-    private static string RenderRule(int[] anchors, GapOutput[] gaps, TokenDictionary dictionary)
+    private static string RenderRule(int[] anchors, GapOutput[] gaps, TokenDictionary dictionary, out bool isExecutable, out IReadOnlyList<string> warnings)
     {
         var parts = new List<string>(anchors.Length + gaps.Length);
+        var ruleWarnings = new List<string>();
         var field = 1;
+
         for (var i = 0; i < anchors.Length; i++)
         {
-            AddRuleGap(parts, gaps[i], ref field);
+            AddRuleGap(parts, gaps[i], isTrailing: false, ref field, ruleWarnings);
             parts.Add(EscapeLiteral(dictionary[anchors[i]]));
         }
-        AddRuleGap(parts, gaps[^1], ref field);
-        // Tokenization only records whitespace as a boundary, not its exact run (tabs, repeated
-        // spaces, ...); joining with a literal ASCII space would reject any record whose original
-        // delimiter differs. `%-:whitespace%` is liblognorm's own motif for a variable-width,
-        // unnamed whitespace run, so it reproduces the boundary faithfully instead of guessing.
-        return string.Join("%-:whitespace%", parts);
+
+        AddRuleGap(parts, gaps[^1], isTrailing: true, ref field, ruleWarnings);
+        isExecutable = ruleWarnings.Count == 0;
+        warnings = ruleWarnings;
+        return string.Join(' ', parts);
     }
 }
 
@@ -528,6 +497,57 @@ internal sealed class TokenDictionary
             builder.Append(_tokens[tokenIds[i]]);
         }
         return builder.ToString();
+    }
+}
+
+internal sealed record TokenizedRecord(long SequenceNumber, int[] Tokens)
+{
+    // Shared by both mining strategies: "materialize" calls ToArray() on this once and caches
+    // the result; "stream" leaves it lazy and re-enumerates recordSource() through it once per
+    // pass, so records are tokenized on the fly and never all held in memory at once.
+    public static IEnumerable<TokenizedRecord> Stream(IEnumerable<LogRecord> records, TokenDictionary dictionary, long maxRecords, long maxInputBytes)
+    {
+        long recordCount = 0;
+        long totalBytes = 0;
+        foreach (var record in records)
+        {
+            recordCount++;
+            totalBytes += record.Message.Length;
+            if (recordCount > maxRecords)
+            {
+                throw new LogClusterInputTooLargeException($"input exceeds --max-records ({maxRecords}); use a smaller input or increase the limit");
+            }
+            if (totalBytes > maxInputBytes)
+            {
+                throw new LogClusterInputTooLargeException($"input exceeds --max-input-bytes ({maxInputBytes}); use a smaller input or increase the limit");
+            }
+            yield return new TokenizedRecord(record.SequenceNumber, Tokenize(record.Message, dictionary));
+        }
+    }
+
+    // Word boundaries collapse any run of whitespace (tabs, repeated spaces, ...) into a single split point,
+    // and the original separator is discarded. Rendered rules/patterns rejoin tokens with a single ASCII
+    // space, so they are a best-effort approximation for records whose delimiters are not a single space.
+    private static int[] Tokenize(string message, TokenDictionary dictionary)
+    {
+        var tokens = new List<int>();
+        var start = -1;
+        for (var i = 0; i <= message.Length; i++)
+        {
+            if (i < message.Length && !char.IsWhiteSpace(message[i]))
+            {
+                if (start < 0)
+                {
+                    start = i;
+                }
+            }
+            else if (start >= 0)
+            {
+                tokens.Add(dictionary.GetOrAdd(message, start, i - start));
+                start = -1;
+            }
+        }
+        return tokens.ToArray();
     }
 }
 

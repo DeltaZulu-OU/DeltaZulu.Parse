@@ -24,6 +24,37 @@ public class LogClusterMinerTests
     }
 
     [TestMethod]
+    public void Mine_MaterializeAndStreamStrategiesProduceIdenticalOutput()
+    {
+        var records = new[] {
+            new LogRecord(1, "Interface Ethernet 1 down at node node1", "test"),
+            new LogRecord(2, "Interface Ethernet 1 down at node node2", "test"),
+            new LogRecord(3, "Interface Ethernet 1 down at node node3", "test"),
+        };
+
+        var materialized = new LogClusterMiner(LogClusterOptions.Parse(["--materialize"])).Mine(() => records, estimatedInputBytes: long.MaxValue);
+        var streamed = new LogClusterMiner(LogClusterOptions.Parse(["--stream"])).Mine(() => records, estimatedInputBytes: 0);
+
+        Assert.AreEqual(materialized.RecordCount, streamed.RecordCount);
+        Assert.HasCount(materialized.Candidates.Count, streamed.Candidates);
+        Assert.AreSequenceEqual(
+            materialized.Candidates.Select(c => c.LogClusterPattern).ToArray(), streamed.Candidates.Select(c => c.LogClusterPattern).ToArray());
+        Assert.AreSequenceEqual(
+            materialized.Candidates.Select(c => c.Support).ToArray(), streamed.Candidates.Select(c => c.Support).ToArray());
+    }
+
+    [TestMethod]
+    public void Mine_ThrowsWhenInputBytesExceedMaxInputBytes()
+    {
+        var options = LogClusterOptions.Parse(["--max-input-bytes", "10"]);
+        var records = new[] {
+            new LogRecord(1, "this line is definitely over ten bytes", "test"),
+        };
+
+        Assert.ThrowsExactly<LogClusterInputTooLargeException>(() => new LogClusterMiner(options).Mine(records));
+    }
+
+    [TestMethod]
     public void Mine_ThrowsWhenRecordCountExceedsMaxRecords()
     {
         var options = LogClusterOptions.Parse(["--max-records", "2"]);
@@ -37,13 +68,17 @@ public class LogClusterMinerTests
     }
 
     [TestMethod]
-    public void Mine_ThrowsWhenInputBytesExceedMaxInputBytes()
+    public void ShouldStream_ForcedOptionsOverrideTheHeuristic()
     {
-        var options = LogClusterOptions.Parse(["--max-input-bytes", "10"]);
-        var records = new[] {
-            new LogRecord(1, "this line is definitely over ten bytes", "test"),
-        };
+        Assert.IsFalse(LogClusterMiner.ShouldStream(estimatedInputBytes: long.MaxValue, LogClusterOptions.Parse(["--materialize"])));
+        Assert.IsTrue(LogClusterMiner.ShouldStream(estimatedInputBytes: 0, LogClusterOptions.Parse(["--stream"])));
+    }
 
-        Assert.ThrowsExactly<LogClusterInputTooLargeException>(() => new LogClusterMiner(options).Mine(records));
+    [TestMethod]
+    public void ShouldStream_LargeEstimateWithoutOverrideStreams()
+    {
+        var options = LogClusterOptions.Parse([]);
+        Assert.IsTrue(LogClusterMiner.ShouldStream(estimatedInputBytes: long.MaxValue / 8, options));
+        Assert.IsFalse(LogClusterMiner.ShouldStream(estimatedInputBytes: 1, options));
     }
 }
