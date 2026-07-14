@@ -180,15 +180,43 @@ public class BasicParserTests
     }
 
     [TestMethod]
-    public void StringParser_DashIsEmptyAcceptsPythonBooleanAndRejectsQuotedDash()
+    public void StringParser_DashIsEmptyAcceptsPythonBooleanAndQuotedDash()
     {
         const string rb = """rule=:%str:string{"option.dashIsEmpty":True}%""";
 
         AssertJsonEquals("""{ "str": "" }""", TestHelpers.Normalize(rb, "-").Json);
 
-        var quotedDash = TestHelpers.Normalize(rb, "\"-\"");
-        Assert.AreNotEqual(0, quotedDash.Result);
-        AssertJsonEquals("""{ "originalmsg": "\"-\"", "unparsed-data": "\"-\"" }""", quotedDash.Json);
+        AssertJsonEquals("""{ "str": "" }""", TestHelpers.Normalize(rb, "\"-\"").Json);
+    }
+
+    [TestMethod]
+    public void StringParser_DashIsEmptyAcceptsQuotedDashWithVersionedRulebase()
+    {
+        /* Regression coverage for the upstream field_string_dashIsEmpty.sh
+         * fixture: option.dashIsEmpty maps a dash-only string token to an
+         * empty string even when the string parser consumed surrounding quotes. */
+        const string rb = """
+            version=2
+            rule=:%str:string{"option.dashIsEmpty":True}%
+            """;
+
+        var path = Path.Combine(Path.GetTempPath(), "dzn-dash-empty-" + Guid.NewGuid().ToString("N") + ".rulebase");
+        try
+        {
+            File.WriteAllText(path, rb);
+            var ctx = new LogNormContext();
+            var loadResult = ctx.LoadSamples(path);
+            Assert.AreEqual(0, loadResult);
+
+            var result = ctx.Normalize("\"-\"", out JsonObject json);
+
+            Assert.AreEqual(0, result);
+            AssertJsonEquals("""{ "str": "" }""", json);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [TestMethod]

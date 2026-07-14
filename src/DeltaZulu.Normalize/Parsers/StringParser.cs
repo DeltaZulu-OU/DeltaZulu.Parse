@@ -268,26 +268,17 @@ internal static class StringParser
             ++parsed; /* skip quote */
         }
 
-        if (data.DashIsEmpty && haveQuotes && parsed == 3
-            && s[offs] == data.QCharBegin
-            && s[offs + 1] == '-'
-            && s[offs + 2] == data.QCharEnd)
+        if (data.DashIsEmpty && IsDashOnlyToken(s, offs, parsed, haveQuotes, data))
         {
-            return ErrorCodes.WrongParser;
+            if (wantValue)
+            {
+                value = JsonValue.Create(string.Empty);
+            }
+            return 0;
         }
 
         if (wantValue)
         {
-            if (data.DashIsEmpty)
-            {
-                var isBareDash = !haveQuotes && parsed == 1 && s[offs] == '-';
-                if (isBareDash)
-                {
-                    value = JsonValue.Create(string.Empty);
-                    return 0;
-                }
-            }
-
             int strt, len;
             if (haveQuotes && data.StripQuotes)
             {
@@ -308,6 +299,20 @@ internal static class StringParser
             value = JsonValue.Create(cstr);
         }
         return 0;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool IsDashOnlyToken(string s, int offs, int parsed, bool haveQuotes, Data data)
+    {
+        if (haveQuotes)
+        {
+            return parsed == 3
+                && s[offs] == data.QCharBegin
+                && s[offs + 1] == '-'
+                && s[offs + 2] == data.QCharEnd;
+        }
+
+        return parsed == 1 && s[offs] == '-';
     }
 
     private static void AddPermittedCharArr(Data data, string chars)
