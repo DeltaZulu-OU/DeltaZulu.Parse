@@ -6,6 +6,8 @@ using System.Text.RegularExpressions;
 namespace LogCluster.Cli;
 
 internal sealed record LogRecord(long SequenceNumber, string Message, string? Source);
+
+internal sealed class LogClusterInputTooLargeException(string message) : Exception(message);
 internal sealed record MiningResult(int RecordCount, IReadOnlyList<CandidateOutput> Candidates);
 internal sealed record CandidateOutput(
     int Support,
@@ -225,14 +227,15 @@ internal sealed class LogClusterMiner(LogClusterOptions options)
     public MiningResult Mine(Func<IEnumerable<LogRecord>> recordSource)
     {
         var dictionary = new TokenDictionary();
+        IEnumerable<LogRecord> GuardedSource() => GuardInputSize(recordSource());
 
         // Pass 1 (mirrors find_frequent_words): tokenize each record against the shared
         // dictionary and count, per token, how many distinct records contain it.
-        var frequentWords = DiscoverFrequentWords(recordSource(), dictionary, out var recordCount);
+        var frequentWords = DiscoverFrequentWords(GuardedSource(), dictionary, out var recordCount);
 
         // Pass 2 (mirrors find_candidates' first half): re-tokenize fresh and group records by
         // their frequent-word anchor sequence, counting support per distinct sequence.
-        var candidates = GenerateCandidates(recordSource(), dictionary, frequentWords);
+        var candidates = GenerateCandidates(GuardedSource(), dictionary, frequentWords);
         var survivors = candidates.Values.Where(c => c.Support >= options.MinSupport).ToArray();
         foreach (var candidate in survivors)
         {
@@ -241,7 +244,7 @@ internal sealed class LogClusterMiner(LogClusterOptions options)
 
         // Pass 3 (mirrors find_candidates' Vars tracking): re-tokenize once more to collect
         // bounded gap evidence, but only for candidates that survived the support threshold.
-        CollectEvidence(recordSource(), dictionary, frequentWords, candidates);
+        CollectEvidence(GuardedSource(), dictionary, frequentWords, candidates);
 
         var outputs = survivors.Select(c => c.ToOutput(recordCount, dictionary))
             .OrderByDescending(c => c.Score.Total)
@@ -335,6 +338,26 @@ internal sealed class LogClusterMiner(LogClusterOptions options)
         }
         return frequent;
     }
+
+    private IEnumerable<LogRecord> GuardInputSize(IEnumerable<LogRecord> records)
+    {
+        long count = 0;
+        long bytes = 0;
+        foreach (var record in records)
+        {
+            count++;
+            bytes += record.Message.Length;
+            if (count > options.MaxRecords)
+            {
+                throw new LogClusterInputTooLargeException($"input exceeds --max-records ({options.MaxRecords}); use a smaller input or increase the limit");
+            }
+            if (bytes > options.MaxInputBytes)
+            {
+                throw new LogClusterInputTooLargeException($"input exceeds --max-input-bytes ({options.MaxInputBytes}); use a smaller input or increase the limit");
+            }
+            yield return record;
+        }
+    }
 }
 
 internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
@@ -389,16 +412,13 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         var renderedGaps = _gaps.Select(g => g.ToOutput()).ToArray();
         var score = CandidateScorer.Score(Support, recordCount, anchors.Length, renderedGaps);
         var specificity = anchors.Length / (double)Math.Max(1, anchors.Length + renderedGaps.Count(g => g.MaxWords > 0));
-        var rule = RenderRule(anchors, renderedGaps, dictionary);
         return new CandidateOutput(
             Support,
             specificity,
             RenderLogCluster(anchors, renderedGaps, dictionary),
-            rule.Text,
+            RenderRule(anchors, renderedGaps, dictionary),
             renderedGaps,
-            score,
-            rule.IsExecutable,
-            rule.Warnings);
+            score);
     }
 
     private static void AddGap(List<string> parts, GapOutput gap)
@@ -409,20 +429,10 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         }
     }
 
-    private static void AddRuleGap(List<string> parts, List<string> warnings, GapOutput gap, ref int field, bool isInternal)
+    private static void AddRuleGap(List<string> parts, GapOutput gap, ref int field)
     {
         if (gap.MaxWords == 0)
         {
-            return;
-        }
-
-        var fieldName = $"field{field++}";
-        if (isInternal && ((gap.MinWords == 0 && gap.MaxWords > 0) || (gap.MaxWords > 1 && gap.SuggestedParser == LiblognormMotifs.Rest)))
-        {
-            var sampleText = gap.Samples.Count == 0 ? string.Empty : $"; samples: {string.Join(" | ", gap.Samples)}";
-            var warning = $"unresolved gap: {fieldName} spans {gap.MinWords}-{gap.MaxWords} words{sampleText}";
-            warnings.Add(warning);
-            parts.Add($"/* {warning} */");
             return;
         }
 
@@ -432,7 +442,7 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         var parser = gap.MinWords == 0
             ? LiblognormMotifs.Rest
             : gap.SuggestedParser ?? (gap.MaxWords == 1 ? LiblognormMotifs.Word : LiblognormMotifs.Rest);
-        parts.Add($"%{fieldName}:{parser}%");
+        parts.Add($"%field{field++}:{parser}%");
     }
 
     private static string EscapeLiteral(string token) => token.Contains('%') || token.Contains(':')
@@ -451,26 +461,23 @@ internal sealed class PatternCandidate(CandidateKey key, int[] anchors)
         return string.Join(' ', parts);
     }
 
-    private static RuleRenderResult RenderRule(int[] anchors, GapOutput[] gaps, TokenDictionary dictionary)
+    private static string RenderRule(int[] anchors, GapOutput[] gaps, TokenDictionary dictionary)
     {
         var parts = new List<string>(anchors.Length + gaps.Length);
-        var warnings = new List<string>();
         var field = 1;
         for (var i = 0; i < anchors.Length; i++)
         {
-            AddRuleGap(parts, warnings, gaps[i], ref field, isInternal: i > 0);
+            AddRuleGap(parts, gaps[i], ref field);
             parts.Add(EscapeLiteral(dictionary[anchors[i]]));
         }
-        AddRuleGap(parts, warnings, gaps[^1], ref field, isInternal: false);
+        AddRuleGap(parts, gaps[^1], ref field);
         // Tokenization only records whitespace as a boundary, not its exact run (tabs, repeated
         // spaces, ...); joining with a literal ASCII space would reject any record whose original
         // delimiter differs. `%-:whitespace%` is liblognorm's own motif for a variable-width,
         // unnamed whitespace run, so it reproduces the boundary faithfully instead of guessing.
-        return new RuleRenderResult(string.Join("%-:whitespace%", parts), warnings.Count == 0, warnings.ToArray());
+        return string.Join("%-:whitespace%", parts);
     }
 }
-
-internal sealed record RuleRenderResult(string Text, bool IsExecutable, IReadOnlyList<string> Warnings);
 
 internal sealed class TokenDictionary
 {

@@ -7,6 +7,8 @@ internal sealed record LogClusterOptions
     public int MinSupport { get; init; } = 2;
     public int MaxCandidates { get; init; } = 50;
     public int MaxSamplesPerGap { get; init; } = 8;
+    public long MaxRecords { get; init; } = 5_000_000;
+    public long MaxInputBytes { get; init; } = 2_147_483_648;
     public bool Json { get; init; }
     public bool Verbose { get; init; }
     public bool SkipEmpty { get; init; } = true;
@@ -59,6 +61,24 @@ internal sealed record LogClusterOptions
                     options = options with { MaxSamplesPerGap = maxSamples };
                     break;
 
+                case "--max-records":
+                    if (++i >= args.Length || !long.TryParse(args[i], NumberStyles.None, CultureInfo.InvariantCulture, out var maxRecords) || maxRecords < 1)
+                    {
+                        return options with { Error = "maximum records must be a positive integer" };
+                    }
+
+                    options = options with { MaxRecords = maxRecords };
+                    break;
+
+                case "--max-input-bytes":
+                    if (++i >= args.Length || !long.TryParse(args[i], NumberStyles.None, CultureInfo.InvariantCulture, out var maxInputBytes) || maxInputBytes < 1)
+                    {
+                        return options with { Error = "maximum input bytes must be a positive integer" };
+                    }
+
+                    options = options with { MaxInputBytes = maxInputBytes };
+                    break;
+
                 case "--json": options = options with { Json = true }; break;
                 case "-v" or "--verbose": options = options with { Verbose = true }; break;
                 case "--keep-empty": options = options with { SkipEmpty = false }; break;
@@ -84,6 +104,8 @@ internal sealed record LogClusterOptions
           -s, --min-support <n>     minimum records that must contain a word or candidate (default: 2)
           -n, --max-candidates <n>  maximum candidates to print (default: 50)
               --max-samples <n>     bounded samples to retain per variable gap (default: 8)
+              --max-records <n>     abort if input exceeds this many records (default: 5000000)
+              --max-input-bytes <n> abort if input exceeds this many bytes (default: 2147483648)
           -m, --message <text>      mine one message supplied on the command line
               --json                emit JSON instead of text
           -v, --verbose             print gap samples and parser confidence

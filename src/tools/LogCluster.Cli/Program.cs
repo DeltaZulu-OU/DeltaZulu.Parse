@@ -61,6 +61,11 @@ namespace LogCluster.Cli
 
                 return 0;
             }
+            catch (LogClusterInputTooLargeException ex)
+            {
+                Console.Error.WriteLine($"error: {ex.Message}");
+                return 1;
+            }
             finally
             {
                 if (stdinSpoolPath is not null)
