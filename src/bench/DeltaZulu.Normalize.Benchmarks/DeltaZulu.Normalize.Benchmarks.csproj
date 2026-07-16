@@ -1,16 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <RootNamespace>DeltaZulu.Normalize.Benchmarks</RootNamespace>
+    <AssemblyName>DeltaZulu.Normalize.Benchmarks</AssemblyName>
     <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
-
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
   </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\..\DeltaZulu.Normalize\DeltaZulu.Normalize.csproj" />
   </ItemGroup>
-
 </Project>
