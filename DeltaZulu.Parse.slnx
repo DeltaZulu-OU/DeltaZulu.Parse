@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DeltaZulu.Parse/DeltaZulu.Parse.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DeltaZulu.Parse.Tests/DeltaZulu.Parse.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="src/tools/LogNormalizer.Cli/LogNormalizer.Cli.csproj" />
+  </Folder>
+  <Folder Name="/bench/">
+    <Project Path="src/bench/DeltaZulu.Parse.Benchmarks/DeltaZulu.Parse.Benchmarks.csproj" />
+  </Folder>
+</Solution>

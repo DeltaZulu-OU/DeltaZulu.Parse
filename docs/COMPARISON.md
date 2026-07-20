@@ -32,7 +32,7 @@ time.
   `README.md` "Known intentional behavior notes", 1st bullet.
 - `json`-typed rulebase parameters accept a quoted numeric string anywhere an
   int is expected (json-c leniency) — `JsonText.GetLenientInt64`
-  (`src/DeltaZulu.Normalize/JsonText.cs`), README 2nd bullet.
+  (`src/DeltaZulu.Parse/JsonText.cs`), README 2nd bullet.
 - `string` motif treats chars above U+00FF as permitted only when
   unrestricted (UTF-16 vs. C's UTF-8-byte semantics) — README 3rd bullet.
 - `string-to` with a single-character search string can never match — a
@@ -84,9 +84,9 @@ time.
   port fixes it (`RulebaseLoader.ReadLogicalLine` folds `\r\n` → `\n`
   everywhere, and the runaway-rule blank-line/comment check treats a bare
   `\r` as a terminator too), pinned by
-  `LogNormContextTests.LoadSamplesFromString_AcceptsCrlfLineEndings`. Present
+  `ParseContextTests.LoadSamplesFromString_AcceptsCrlfLineEndings`. Present
   in the code/commit history (`b064fe8`) but not previously in the README.
-- **Normalizer `endNode` tag/metadata attribution fix.** This is the most
+- **Walker `endNode` tag/metadata attribution fix.** This is the most
   consequential finding of the audit — see §3 below; it's cross-cutting
   (parser-independent) but manifests exactly in the shared-prefix + `rest`
   scenario the `rest`-zero-byte-match note already covers for *fields*.
@@ -127,7 +127,7 @@ time.
 - **CRLF handling** — see §1 above; applies to the loader broadly, not just
   a specific motif.
 - **`LIBLOGNORM_RULEBASES` environment variable is renamed to
-  `DeltaZulu.Normalize_RULEBASES`** for the `include=`/`-r` search-path
+  `DeltaZulu.Parse_RULEBASES`** for the `include=`/`-r` search-path
   fallback (`RulebaseLoader.cs`). Functionally faithful (same two-step
   "literal path, else env-var-relative unless absolute" resolution as
   `tryOpenRBFile` in `samp.c`), but the name change was previously silent —
@@ -214,7 +214,7 @@ and running the real C library)
       r = 0;
   }
   ```
-  with no guard on `r`. This port's `Normalizer.cs` adds one:
+  with no guard on `r`. This port's `PdagWalker.cs` adds one:
   ```csharp
   if (r != 0 && node.IsTerminal && (offs == npb.StrLen || bPartialMatch))
   {
@@ -278,10 +278,10 @@ and running the real C library)
   locking only around compilation) makes concurrent load+normalize safe.
   Already framed correctly as an added capability in the README/`Layout`
   section, not a behavior change to compare against.
-- **Flat result type (`NormalizeResult`).** The engine commits extracted
+- **Flat result type (`ParseResult`).** The engine commits extracted
   fields into a flat (name, value) collector during the walk; the
   `JsonObject` the classic overload returns is materialized from it at the
-  end, and the `NormalizeResult` overload exposes the flat form directly —
+  end, and the `ParseResult` overload exposes the flat form directly —
   string values as zero-copy slices of the input message, with JSON text
   serialized straight from the slices. The C library has no equivalent
   (its `json_object` result *is* the working representation). The fixJSON
@@ -296,7 +296,7 @@ and running the real C library)
 - `ErrorCodes.cs`'s "value-compatible with the C library" claim holds for
   every code it defines (`NoMem=-1`, `BadConfig=-250`, `BadParserState=-500`,
   `WrongParser=-1000` all match `liblognorm.h`).
-- `LogNormOptions.CollectStats` is correctly noted as "not a C library flag"
+- `ParseOptions.CollectStats` is correctly noted as "not a C library flag"
   — C's `dag->stats.called`/`backtracked` counters are incremented
   unconditionally, gated by no ctxopt at all.
 - `annotate=`'s field-ordering comment in `Annotations.cs` (tags processed
@@ -328,10 +328,10 @@ and running the real C library)
   stated scope (no encoders, no stats/debug output, no v1 engine): no
   `-e/-E` (XML/CSV/CEE-syslog output encoders — none of `enc_csv.c`/
   `enc_xml.c`/`enc_syslog.c` are ported at all), no `-d` (DOT graph export,
-  even though the underlying `LogNormContext.GenerateDot()` exists in the
+  even though the underlying `ParseContext.GenerateDot()` exists in the
   library and just isn't wired up to a flag), no `-oaddRuleLocation` CLI
   flag (same story — the library option exists, the CLI doesn't expose it),
-  and no `-p/-P/-t/-L/-H/-U/-v/-V/-s/-S/-x/-R` flags. Conversely, `-m` (normalize
+  and no `-p/-P/-t/-L/-H/-U/-v/-V/-s/-S/-x/-R` flags. Conversely, `-m` (parse
   a single message inline without stdin) and `-r` accepting a directory are
   pure C# additions with no upstream flag to match.
 - A narrow, currently-unreachable-in-practice `annotate=` ordering edge case:

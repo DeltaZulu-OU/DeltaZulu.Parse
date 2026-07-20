@@ -1,6 +1,6 @@
-# DeltaZulu.Normalize
+# DeltaZulu.Parse
 
-`DeltaZulu.Normalize` is a .NET 10 library that normalizes unstructured log
+`DeltaZulu.Parse` is a .NET 10 library that parses unstructured log
 messages into structured JSON using a liblognorm v2-compatible, PDAG-based
 rulebase engine.
 
@@ -21,7 +21,7 @@ dotnet nuget add source \
   --name deltazulu-github \
   https://nuget.pkg.github.com/DeltaZulu-OU/index.json
 
-dotnet add package DeltaZulu.Normalize --version 0.1.0-preview.1
+dotnet add package DeltaZulu.Parse --version 0.1.0-preview.1
 ```
 
 `deltazulu-github` is the configured source *name*, not a filesystem path. Do
@@ -32,19 +32,19 @@ pass its full URL instead.
 ## Quick start
 
 ```csharp
-using DeltaZulu.Normalize;
+using DeltaZulu.Parse;
 using System.Text.Json.Nodes;
 
-var context = new LogNormContext();
+var context = new ParseContext();
 context.LoadSamplesFromString("""
     rule=:%host:word% connected from %ip:ipv4%
     """);
 
-int result = context.Normalize("server connected from 192.168.1.1", out JsonObject json);
+int result = context.Parse("server connected from 192.168.1.1", out JsonObject json);
 // result == 0; json contains {"host":"server","ip":"192.168.1.1"}.
 ```
 
-See the [repository](https://github.com/DeltaZulu-OU/DeltaZulu.Normalize) for
+See the [repository](https://github.com/DeltaZulu-OU/DeltaZulu.Parse) for
 rulebase documentation, CLI usage, and development guidance.
 
 ## Versioning

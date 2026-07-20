@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DeltaZulu.Parse.Benchmarks</RootNamespace>
+    <AssemblyName>DeltaZulu.Parse.Benchmarks</AssemblyName>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\DeltaZulu.Parse\DeltaZulu.Parse.csproj" />
+  </ItemGroup>
+</Project>

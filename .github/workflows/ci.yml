@@ -25,7 +25,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(dotnet msbuild src/DeltaZulu.Normalize/DeltaZulu.Normalize.csproj -getProperty:Version -nologo | tail -n 1)"
+          version="$(dotnet msbuild src/DeltaZulu.Parse/DeltaZulu.Parse.csproj -getProperty:Version -nologo | tail -n 1)"
           if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
             echo "Version '$version' is not a supported SemVer package version." >&2
             exit 1
@@ -33,18 +33,18 @@ jobs:
           echo "package_version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Restore locked dependencies
-        run: dotnet restore DeltaZulu.Normalize.slnx --locked-mode
+        run: dotnet restore DeltaZulu.Parse.slnx --locked-mode
 
       - name: Build solution
-        run: dotnet build DeltaZulu.Normalize.slnx --configuration Release --no-restore
+        run: dotnet build DeltaZulu.Parse.slnx --configuration Release --no-restore
 
       - name: Run tests
-        run: dotnet test tests/DeltaZulu.Normalize.Tests/DeltaZulu.Normalize.Tests.csproj --configuration Release --no-build --no-restore
+        run: dotnet test tests/DeltaZulu.Parse.Tests/DeltaZulu.Parse.Tests.csproj --configuration Release --no-build --no-restore
 
       - name: Pack library
         env:
           PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
-        run: dotnet pack src/DeltaZulu.Normalize/DeltaZulu.Normalize.csproj --configuration Release --no-build --no-restore --output "$PACKAGE_OUTPUT" /p:PackageVersion="$PACKAGE_VERSION"
+        run: dotnet pack src/DeltaZulu.Parse/DeltaZulu.Parse.csproj --configuration Release --no-build --no-restore --output "$PACKAGE_OUTPUT" /p:PackageVersion="$PACKAGE_VERSION"
 
       - name: Inspect package contents
         env:
@@ -52,12 +52,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          package="$PACKAGE_OUTPUT/DeltaZulu.Normalize.$PACKAGE_VERSION.nupkg"
+          package="$PACKAGE_OUTPUT/DeltaZulu.Parse.$PACKAGE_VERSION.nupkg"
           unzip -l "$package"
           unzip -Z1 "$package" | grep -Fx README.md
           unzip -Z1 "$package" | grep -Fx LICENSE.txt
-          unzip -Z1 "$package" | grep -Fx 'lib/net10.0/DeltaZulu.Normalize.dll'
-          ! unzip -Z1 "$package" | grep -E '(^|/)(DeltaZulu\.Normalize\.Tests|LogNormalizer\.Cli|DeltaZulu\.Normalize\.Benchmarks)(/|\.)'
+          unzip -Z1 "$package" | grep -Fx 'lib/net10.0/DeltaZulu.Parse.dll'
+          ! unzip -Z1 "$package" | grep -E '(^|/)(DeltaZulu\.Parse\.Tests|LogParser\.Cli|DeltaZulu\.Parse\.Benchmarks)(/|\.)'
 
       - name: Smoke test local package consumer
         env:
@@ -77,16 +77,16 @@ jobs:
             </packageSources>
           </configuration>
           EOF_CONFIG
-          dotnet add "$consumer/package-consumer.csproj" package DeltaZulu.Normalize --version "$PACKAGE_VERSION" --no-restore
+          dotnet add "$consumer/package-consumer.csproj" package DeltaZulu.Parse --version "$PACKAGE_VERSION" --no-restore
           cat > "$consumer/Program.cs" <<'EOF_PROGRAM'
-          using DeltaZulu.Normalize;
+          using DeltaZulu.Parse;
           using System.Text.Json.Nodes;
 
-          var context = new LogNormContext();
+          var context = new ParseContext();
           context.LoadSamplesFromString("""
               rule=:%host:word% connected from %ip:ipv4%
               """);
-          int result = context.Normalize("server connected from 192.168.1.1", out JsonObject json);
+          int result = context.Parse("server connected from 192.168.1.1", out JsonObject json);
           if (result != 0 || json["host"]?.GetValue<string>() != "server")
           {
               throw new InvalidOperationException("Package consumer smoke test failed.");
@@ -95,9 +95,23 @@ jobs:
           dotnet restore "$consumer/package-consumer.csproj" --configfile "$config"
           dotnet run --project "$consumer/package-consumer.csproj" --no-restore
 
-      - name: Upload package candidate
+      - name: Upload package candidate artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DeltaZulu.Normalize.${{ steps.version.outputs.package_version }}
+          name: DeltaZulu.Parse.${{ steps.version.outputs.package_version }}
           path: ${{ env.PACKAGE_OUTPUT }}/*.nupkg
           if-no-files-found: error
+
+      - name: Summarize package candidate
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="DeltaZulu.Parse.$PACKAGE_VERSION.nupkg"
+          {
+            echo "### NuGet package candidate"
+            echo
+            echo "The CI workflow validates and uploads \`$package\` as a workflow artifact."
+            echo "It does not publish to GitHub Packages; use the \`Publish NuGet package\` workflow for feed publication."
+          } >> "$GITHUB_STEP_SUMMARY"

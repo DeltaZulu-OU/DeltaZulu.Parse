@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\DeltaZulu.Normalize\DeltaZulu.Normalize.csproj" />
+    <ProjectReference Include="..\..\DeltaZulu.Parse\DeltaZulu.Parse.csproj" />
   </ItemGroup>
 
 </Project>

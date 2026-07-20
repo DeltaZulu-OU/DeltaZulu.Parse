@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using DeltaZulu.Normalize;
+using DeltaZulu.Parse;
 
 var jsonOptions = new JsonSerializerOptions {
     Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
@@ -96,17 +96,17 @@ if (rulebasePath != null && importBinaryPath != null)
     return 1;
 }
 
-var ctx = new LogNormContext {
+var ctx = new ParseContext {
     ErrorCallback = msg => Console.Error.WriteLine($"lognormalizer: {msg}"),
 };
 if (addOriginalMsg)
 {
-    ctx.Options |= LogNormOptions.AddOriginalMessage;
+    ctx.Options |= ParseOptions.AddOriginalMessage;
 }
 
 if (addRule)
 {
-    ctx.Options |= LogNormOptions.AddRule;
+    ctx.Options |= ParseOptions.AddRule;
 }
 
 if (importBinaryPath != null)
@@ -142,21 +142,21 @@ if (exportBinaryPath != null)
 
 if (singleMessage != null)
 {
-    NormalizeAndPrint(ctx, singleMessage, includeEventTags, jsonOptions);
+    ParseAndPrint(ctx, singleMessage, includeEventTags, jsonOptions);
     return 0;
 }
 
 string? line;
 while ((line = Console.In.ReadLine()) != null)
 {
-    NormalizeAndPrint(ctx, line, includeEventTags, jsonOptions);
+    ParseAndPrint(ctx, line, includeEventTags, jsonOptions);
 }
 
 return 0;
 
-static void NormalizeAndPrint(LogNormContext ctx, string message, bool includeEventTags, JsonSerializerOptions jsonOptions)
+static void ParseAndPrint(ParseContext ctx, string message, bool includeEventTags, JsonSerializerOptions jsonOptions)
 {
-    ctx.Normalize(message, out JsonObject json);
+    ctx.Parse(message, out JsonObject json);
     if (!includeEventTags)
     {
         json.Remove("event.tags");
@@ -179,7 +179,7 @@ static void PrintUsage()
           --export-binary <path>
                        write the compiled PDAG binary after loading/importing
                        the rulebase
-          -m <message> normalize a single message instead of reading stdin
+          -m <message> parse a single message instead of reading stdin
           -O           always add the original message to the output
           --add-rule   add a mock-up of the matching rule to the output metadata
           -T           include the internal 'event.tags' field in the JSON output

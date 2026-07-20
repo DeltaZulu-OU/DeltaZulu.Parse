@@ -558,7 +558,7 @@ def run_csharp(
     message: str,
 ) -> ProcessOutput:
     env = dict(os.environ)
-    env["DeltaZulu.Normalize_RULEBASES"] = str(rulebase_search_dir)
+    env["DeltaZulu.Parse_RULEBASES"] = str(rulebase_search_dir)
     env["LIBLOGNORM_RULEBASES"] = str(rulebase_search_dir)
 
     return run_process(
