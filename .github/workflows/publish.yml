@@ -5,11 +5,6 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: Optional version that must match Directory.Build.props, without the leading v.
-        required: false
-        type: string
 
 permissions:
   contents: write
@@ -22,11 +17,11 @@ jobs:
       PACKAGE_OUTPUT: ${{ github.workspace }}/artifacts/packages
       GITHUB_NUGET_SOURCE: https://nuget.pkg.github.com/DeltaZulu-OU/index.json
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
 
@@ -35,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          source_version="$(dotnet msbuild src/DeltaZulu.Normalize/DeltaZulu.Normalize.csproj -getProperty:Version -nologo | tail -n 1)"
+          source_version="$(dotnet msbuild src/DeltaZulu.Parse/DeltaZulu.Parse.csproj -getProperty:Version -nologo | tail -n 1)"
           if ! [[ "$source_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
             echo "Version '$source_version' is not a supported SemVer package version." >&2
             exit 1
@@ -47,9 +42,6 @@ jobs:
               echo "Tag version '$tag_version' does not match source version '$source_version'." >&2
               exit 1
             fi
-          elif [[ -n "${{ inputs.version }}" && "${{ inputs.version }}" != "$source_version" ]]; then
-            echo "Manual version '${{ inputs.version }}' does not match source version '$source_version'." >&2
-            exit 1
           fi
 
           echo "package_version=$source_version" >> "$GITHUB_OUTPUT"
@@ -72,18 +64,18 @@ jobs:
           git push origin "$RELEASE_TAG"
 
       - name: Restore locked dependencies
-        run: dotnet restore DeltaZulu.Normalize.slnx --locked-mode
+        run: dotnet restore DeltaZulu.Parse.slnx --locked-mode
 
       - name: Build solution
-        run: dotnet build DeltaZulu.Normalize.slnx --configuration Release --no-restore
+        run: dotnet build DeltaZulu.Parse.slnx --configuration Release --no-restore
 
       - name: Run tests
-        run: dotnet test tests/DeltaZulu.Normalize.Tests/DeltaZulu.Normalize.Tests.csproj --configuration Release --no-build --no-restore
+        run: dotnet test tests/DeltaZulu.Parse.Tests/DeltaZulu.Parse.Tests.csproj --configuration Release --no-build --no-restore
 
       - name: Pack library
         env:
           PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
-        run: dotnet pack src/DeltaZulu.Normalize/DeltaZulu.Normalize.csproj --configuration Release --no-build --no-restore --output "$PACKAGE_OUTPUT" /p:PackageVersion="$PACKAGE_VERSION"
+        run: dotnet pack src/DeltaZulu.Parse/DeltaZulu.Parse.csproj --configuration Release --no-build --no-restore --output "$PACKAGE_OUTPUT" /p:PackageVersion="$PACKAGE_VERSION"
 
       - name: Inspect package contents
         env:
@@ -91,12 +83,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          package="$PACKAGE_OUTPUT/DeltaZulu.Normalize.$PACKAGE_VERSION.nupkg"
+          package="$PACKAGE_OUTPUT/DeltaZulu.Parse.$PACKAGE_VERSION.nupkg"
           unzip -l "$package"
           unzip -Z1 "$package" | grep -Fx README.md
           unzip -Z1 "$package" | grep -Fx LICENSE.txt
-          unzip -Z1 "$package" | grep -Fx 'lib/net10.0/DeltaZulu.Normalize.dll'
-          ! unzip -Z1 "$package" | grep -E '(^|/)(DeltaZulu\.Normalize\.Tests|LogNormalizer\.Cli|DeltaZulu\.Normalize\.Benchmarks)(/|\.)'
+          unzip -Z1 "$package" | grep -Fx 'lib/net10.0/DeltaZulu.Parse.dll'
+          ! unzip -Z1 "$package" | grep -E '(^|/)(DeltaZulu\.Parse\.Tests|LogNormalizer\.Cli|DeltaZulu\.Parse\.Benchmarks)(/|\.)'
 
       - name: Publish package to GitHub Packages
         env:
@@ -104,14 +96,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          config="$RUNNER_TEMP/github-packages-nuget.config"
+          dotnet new nugetconfig --output "$RUNNER_TEMP" --force
+          mv "$RUNNER_TEMP/nuget.config" "$config"
           dotnet nuget add source \
             --username "${{ github.actor }}" \
             --password "$GITHUB_TOKEN" \
             --store-password-in-clear-text \
             --name github \
+            --configfile "$config" \
             "$GITHUB_NUGET_SOURCE"
           dotnet nuget push "$PACKAGE_OUTPUT"/*.nupkg \
             --api-key "$GITHUB_TOKEN" \
+            --configfile "$config" \
             --source github \
             --skip-duplicate
 
@@ -127,7 +124,7 @@ jobs:
             echo "Release '$RELEASE_TAG' already exists."
           else
             gh release create "$RELEASE_TAG" \
-              --title "DeltaZulu.Normalize $PACKAGE_VERSION" \
-              --notes "Published DeltaZulu.Normalize $PACKAGE_VERSION to GitHub Packages." \
-              "$PACKAGE_OUTPUT/DeltaZulu.Normalize.$PACKAGE_VERSION.nupkg"
+              --title "DeltaZulu.Parse $PACKAGE_VERSION" \
+              --notes "Published DeltaZulu.Parse $PACKAGE_VERSION to GitHub Packages." \
+              "$PACKAGE_OUTPUT/DeltaZulu.Parse.$PACKAGE_VERSION.nupkg"
           fi
