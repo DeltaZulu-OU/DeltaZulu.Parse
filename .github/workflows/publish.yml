@@ -37,7 +37,7 @@ jobs:
             exit 1
           fi
 
-          if [[ "${{ github.event_name }}" == "push" ]]; then
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
             tag_version="${GITHUB_REF_NAME#v}"
             if [[ "$tag_version" != "$source_version" ]]; then
               echo "Tag version '$tag_version' does not match source version '$source_version'." >&2
@@ -48,17 +48,17 @@ jobs:
           echo "package_version=$source_version" >> "$GITHUB_OUTPUT"
           echo "tag=v$source_version" >> "$GITHUB_OUTPUT"
 
-      - name: Validate release tag for manual dispatch
+      - name: Validate manual dispatch ref
         if: github.event_name == 'workflow_dispatch'
-        env:
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          if ! git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Tag '$RELEASE_TAG' does not exist. Create the protected release tag before manually dispatching this workflow." >&2
+          if [[ "${{ github.ref_type }}" != "tag" ]]; then
+            echo "Manual publish runs must be started from an existing release tag (for example, '${{ steps.version.outputs.tag }}')." >&2
+            echo "This workflow does not create tags because repository rules restrict tag creation by GitHub Actions." >&2
             exit 1
           fi
+          echo "Manual publish is running from existing tag '${{ github.ref_name }}'."
 
       - name: Restore locked dependencies
         run: dotnet restore DeltaZulu.Parse.slnx --locked-mode

@@ -51,12 +51,13 @@ rulebase documentation, CLI usage, and development guidance.
 
 `Directory.Build.props` is the single version authority. CI validates that
 value and packs a candidate with the identical version. The publish workflow
-can also be run manually after the corresponding protected `v<version>` Git tag
-has been created: it reads the same source version, validates that tag exists,
-publishes the package to GitHub Packages, creates portable self-contained
-single-file `lognormalizer` binaries for Linux, macOS, and Windows, and attaches
-the binaries next to the `.nupkg` on the GitHub Release. Update the source
-version before dispatching the publish workflow; GitHub Packages versions are
+can also be run manually: it reads the same source version, creates the
+corresponding protected `v<version>` Git tag when it does not already exist,
+verifies any existing tag points to the checked-out commit, publishes the
+package to GitHub Packages, creates portable self-contained single-file
+`lognormalizer` binaries for Linux, macOS, and Windows, and attaches the
+binaries next to the `.nupkg` on the GitHub Release. Update the source version
+before dispatching the publish workflow; GitHub Packages versions are
 immutable.
 
 ## License
