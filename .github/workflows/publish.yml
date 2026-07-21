@@ -156,15 +156,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s nullglob
+
+          package="$PACKAGE_OUTPUT/DeltaZulu.Parse.$PACKAGE_VERSION.nupkg"
+          assets=("$BINARY_OUTPUT"/*)
+
+          test -f "$package"
+
+          if (( ${#assets[@]} == 0 )); then
+            echo "No binary release assets found in '$BINARY_OUTPUT'." >&2
+            exit 1
+          fi
+
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             echo "Release '$RELEASE_TAG' already exists."
           else
             gh release create "$RELEASE_TAG" \
               --title "DeltaZulu.Parse $PACKAGE_VERSION" \
-              --notes "Published DeltaZulu.Parse $PACKAGE_VERSION to GitHub Packages. Portable single-file lognormalizer binaries are attached for Linux, macOS, and Windows." \
+              --notes "Published DeltaZulu.Parse $PACKAGE_VERSION to GitHub Packages. Portable single-file lognormalizer binaries are attached for Linux, macOS, and Windows."
           fi
 
-          gh release upload "$RELEASE_TAG" "$PACKAGE_OUTPUT/DeltaZulu.Parse.$PACKAGE_VERSION.nupkg" --clobber
-          for asset in "$BINARY_OUTPUT"/*; do
+          gh release upload "$RELEASE_TAG" "$package" --clobber
+
+          for asset in "${assets[@]}"; do
             gh release upload "$RELEASE_TAG" "$asset" --clobber
           done
