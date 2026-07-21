@@ -46,8 +46,8 @@ internal sealed class ParserInfo
     public bool RequiresConfiguration { get; init; }
 
     /// <summary>How suggestion tooling should use this parser.</summary>
-    public LiblognormParserSuggestionUse SuggestionUse { get; init; } =
-        LiblognormParserSuggestionUse.InferFromSample;
+    public ParserSuggestionUse SuggestionUse { get; init; } =
+        ParserSuggestionUse.InferFromSample;
 }
 
 /// <summary>
@@ -74,8 +74,8 @@ internal static class ParserTable
 
     public static readonly ParserInfo[] Parsers =
     {
-        new() { Name = "literal", Priority = 4, Construct = LiteralParser.Construct, Parse = LiteralParser.Parse, CatalogExposed = false, RequiresConfiguration = true, SuggestionUse = LiblognormParserSuggestionUse.None },
-        new() { Name = "repeat", Priority = 4, Construct = RepeatParser.Construct, Parse = RepeatParser.Parse, CatalogExposed = false, RequiresConfiguration = true, SuggestionUse = LiblognormParserSuggestionUse.None },
+        new() { Name = "literal", Priority = 4, Construct = LiteralParser.Construct, Parse = LiteralParser.Parse, CatalogExposed = false, RequiresConfiguration = true, SuggestionUse = ParserSuggestionUse.None },
+        new() { Name = "repeat", Priority = 4, Construct = RepeatParser.Construct, Parse = RepeatParser.Parse, CatalogExposed = false, RequiresConfiguration = true, SuggestionUse = ParserSuggestionUse.None },
         new() { Name = "date-rfc3164", Priority = 8, Construct = DateTimeParsers.ConstructRfc3164, Parse = DateTimeParsers.ParseRfc3164 },
         new() { Name = "date-rfc5424", Priority = 8, Construct = DateTimeParsers.ConstructRfc5424, Parse = DateTimeParsers.ParseRfc5424 },
         new() { Name = "number", Priority = 16, Construct = NumberParsers.ConstructNumber, Parse = NumberParsers.ParseNumber },
@@ -87,7 +87,7 @@ internal static class ParserTable
         new() { Name = "ipv6", Priority = 4, Parse = NetworkParsers.ParseIPv6 },
         new() { Name = WordParserName, Priority = 32, Parse = CoreParsers.ParseWord },
         new() { Name = "alpha", Priority = 32, Parse = CoreParsers.ParseAlpha },
-        new() { Name = RestParserName, Priority = 255, Parse = CoreParsers.ParseRest, SuggestionUse = LiblognormParserSuggestionUse.FallbackOnly },
+        new() { Name = RestParserName, Priority = 255, Parse = CoreParsers.ParseRest, SuggestionUse = ParserSuggestionUse.FallbackOnly },
         new() { Name = "op-quoted-string", Priority = 64, Construct = CoreParsers.ConstructOpQuotedString, Parse = CoreParsers.ParseOpQuotedString },
         new() { Name = "quoted-string", Priority = 64, Parse = CoreParsers.ParseQuotedString },
         new() { Name = "date-iso", Priority = 8, Parse = DateTimeParsers.ParseIsoDate },
@@ -102,9 +102,9 @@ internal static class ParserTable
         new() { Name = "v2-iptables", Priority = 4, Parse = StructuredParsers.ParseV2IpTables },
         new() { Name = "name-value-list", Priority = 8, Construct = StructuredParsers.ConstructNameValue, Parse = StructuredParsers.ParseNameValue },
         new() { Name = "checkpoint-lea", Priority = 4, Construct = StructuredParsers.ConstructCheckpointLea, Parse = StructuredParsers.ParseCheckpointLea },
-        new() { Name = "string-to", Priority = 32, Construct = CoreParsers.ConstructStringTo, Parse = CoreParsers.ParseStringTo, RequiresConfiguration = true, SuggestionUse = LiblognormParserSuggestionUse.None },
-        new() { Name = "char-to", Priority = 32, Construct = CoreParsers.ConstructCharTo, Parse = CoreParsers.ParseCharTo, RequiresConfiguration = true, SuggestionUse = LiblognormParserSuggestionUse.None },
-        new() { Name = "char-sep", Priority = 32, Construct = CoreParsers.ConstructCharSeparated, Parse = CoreParsers.ParseCharSeparated, RequiresConfiguration = true, SuggestionUse = LiblognormParserSuggestionUse.None },
+        new() { Name = "string-to", Priority = 32, Construct = CoreParsers.ConstructStringTo, Parse = CoreParsers.ParseStringTo, RequiresConfiguration = true, SuggestionUse = ParserSuggestionUse.None },
+        new() { Name = "char-to", Priority = 32, Construct = CoreParsers.ConstructCharTo, Parse = CoreParsers.ParseCharTo, RequiresConfiguration = true, SuggestionUse = ParserSuggestionUse.None },
+        new() { Name = "char-sep", Priority = 32, Construct = CoreParsers.ConstructCharSeparated, Parse = CoreParsers.ParseCharSeparated, RequiresConfiguration = true, SuggestionUse = ParserSuggestionUse.None },
         new() { Name = "string", Priority = 32, Construct = StringParser.Construct, Parse = StringParser.Parse },
     };
 
@@ -115,11 +115,11 @@ internal static class ParserTable
         TypeRoots = [],
     };
 
-    internal static IReadOnlyList<LiblognormParserDescriptor> CatalogParsers { get; } = BuildCatalogParsers();
+    internal static IReadOnlyList<ParserDescriptor> CatalogParsers { get; } = BuildCatalogParsers();
 
     private static readonly FrozenDictionary<string, byte> CatalogIdsByName = BuildCatalogIdsByName();
 
-    private static readonly FrozenDictionary<string, LiblognormParserDescriptor> CatalogParsersByName =
+    private static readonly FrozenDictionary<string, ParserDescriptor> CatalogParsersByName =
         CatalogParsers.ToFrozenDictionary(p => p.Name, StringComparer.Ordinal);
 
     internal static bool IsCatalogFullMatch(string parserName, ReadOnlySpan<char> sample)
@@ -152,12 +152,12 @@ internal static class ParserTable
         return result == 0 && offset + parsed == input.Length;
     }
 
-    internal static bool TryGetCatalogParser(string name, out LiblognormParserDescriptor parser) =>
+    internal static bool TryGetCatalogParser(string name, out ParserDescriptor parser) =>
         CatalogParsersByName.TryGetValue(name, out parser!);
 
-    private static LiblognormParserDescriptor[] BuildCatalogParsers()
+    private static ParserDescriptor[] BuildCatalogParsers()
     {
-        var descriptors = new List<LiblognormParserDescriptor>();
+        var descriptors = new List<ParserDescriptor>();
 
         foreach (var parser in Parsers)
         {
@@ -166,7 +166,7 @@ internal static class ParserTable
                 continue;
             }
 
-            descriptors.Add(new LiblognormParserDescriptor(
+            descriptors.Add(new ParserDescriptor(
                 parser.Name,
                 parser.Priority,
                 parser.SuggestionUse,

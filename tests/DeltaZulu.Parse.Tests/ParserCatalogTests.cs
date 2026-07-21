@@ -1,17 +1,17 @@
 namespace DeltaZulu.Parse.Tests;
 
 [TestClass]
-public class LiblognormParserCatalogTests
+public class ParserCatalogTests
 {
     [TestMethod]
     public void Catalog_ExposesUsefulBuiltInMotifs()
     {
-        ILiblognormParserCatalog catalog = LiblognormParserCatalog.Instance;
+        IParserCatalog catalog = ParserCatalog.Instance;
 
         Assert.IsTrue(catalog.TryGetParser("ipv4", out var ipv4));
         Assert.AreEqual("ipv4", ipv4.Name);
         Assert.AreEqual(4, ipv4.Priority);
-        Assert.AreEqual(LiblognormParserSuggestionUse.InferFromSample, ipv4.SuggestionUse);
+        Assert.AreEqual(ParserSuggestionUse.InferFromSample, ipv4.SuggestionUse);
         Assert.IsTrue(ipv4.CanInferFromSample);
         Assert.IsTrue(ipv4.CanRenderWithoutConfiguration);
         Assert.IsFalse(ipv4.RequiresConfiguration);
@@ -23,17 +23,17 @@ public class LiblognormParserCatalogTests
     [TestMethod]
     public void Catalog_IdentifiesMotifsThatNeedConfigurationOrArePoorSuggestions()
     {
-        var catalog = LiblognormParserCatalog.Instance;
+        var catalog = ParserCatalog.Instance;
 
         Assert.IsTrue(catalog.TryGetParser("char-to", out var charTo));
         Assert.IsTrue(charTo.RequiresConfiguration);
-        Assert.AreEqual(LiblognormParserSuggestionUse.None, charTo.SuggestionUse);
+        Assert.AreEqual(ParserSuggestionUse.None, charTo.SuggestionUse);
         Assert.IsFalse(charTo.CanInferFromSample);
         Assert.IsFalse(charTo.CanRenderWithoutConfiguration);
 
         Assert.IsTrue(catalog.TryGetParser("rest", out var rest));
         Assert.IsFalse(rest.RequiresConfiguration);
-        Assert.AreEqual(LiblognormParserSuggestionUse.FallbackOnly, rest.SuggestionUse);
+        Assert.AreEqual(ParserSuggestionUse.FallbackOnly, rest.SuggestionUse);
         Assert.IsFalse(rest.CanInferFromSample);
         Assert.IsTrue(rest.CanRenderWithoutConfiguration);
     }
@@ -41,7 +41,7 @@ public class LiblognormParserCatalogTests
     [TestMethod]
     public void Catalog_ExposesStableFallbackParserNames()
     {
-        ILiblognormParserCatalog catalog = LiblognormParserCatalog.Instance;
+        IParserCatalog catalog = ParserCatalog.Instance;
 
         Assert.AreEqual("word", catalog.WordParserName);
         Assert.AreEqual("rest", catalog.RestParserName);
@@ -52,7 +52,7 @@ public class LiblognormParserCatalogTests
     [TestMethod]
     public void Catalog_MetadataComesFromParseParserTable()
     {
-        ILiblognormParserCatalog catalog = LiblognormParserCatalog.Instance;
+        IParserCatalog catalog = ParserCatalog.Instance;
 
         foreach (var parser in ParserTable.Parsers)
         {
@@ -77,7 +77,7 @@ public class LiblognormParserCatalogTests
     [DataRow("literal", "abc", false)]
     public void IsFullMatch_RequiresOneExposedParserToConsumeEntireSample(string parserName, string sample, bool expected)
     {
-        var catalog = LiblognormParserCatalog.Instance;
+        var catalog = ParserCatalog.Instance;
 
         Assert.AreEqual(expected, catalog.IsFullMatch(parserName, sample));
     }
