@@ -79,6 +79,8 @@ Directory loads are deterministic (files load in ordinal path order), skip hidde
 dotnet run --project tools/LogNormalizer.Cli -- -r rules.rulebase -m 'some log line'
 ```
 
+GitHub Releases also attach portable, self-contained single-file `lognormalizer` binaries next to the NuGet package for `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`, and `win-x64`. Download the archive matching your platform, extract it, and run `lognormalizer` (or `lognormalizer.exe` on Windows) without installing a .NET runtime.
+
 `event.tags` (an internal field populated whenever the matching rule carries tags) is stripped from the CLI's output by default, matching the reference `lognormalizer` tool; pass `-T` to include it.
 
 ## Known intentional behavior notes

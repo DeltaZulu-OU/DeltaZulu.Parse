@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PACKAGE_OUTPUT: ${{ github.workspace }}/artifacts/packages
+      BINARY_OUTPUT: ${{ github.workspace }}/artifacts/binaries
       GITHUB_NUGET_SOURCE: https://nuget.pkg.github.com/DeltaZulu-OU/index.json
     steps:
       - uses: actions/checkout@v7
@@ -47,21 +48,17 @@ jobs:
           echo "package_version=$source_version" >> "$GITHUB_OUTPUT"
           echo "tag=v$source_version" >> "$GITHUB_OUTPUT"
 
-      - name: Create release tag for manual dispatch
+      - name: Validate release tag for manual dispatch
         if: github.event_name == 'workflow_dispatch'
         env:
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Tag '$RELEASE_TAG' already exists; update Directory.Build.props to an unpublished version." >&2
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Tag '$RELEASE_TAG' does not exist. Create the protected release tag before manually dispatching this workflow." >&2
             exit 1
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag --annotate "$RELEASE_TAG" --message "Release $RELEASE_TAG"
-          git push origin "$RELEASE_TAG"
 
       - name: Restore locked dependencies
         run: dotnet restore DeltaZulu.Parse.slnx --locked-mode
@@ -89,6 +86,41 @@ jobs:
           unzip -Z1 "$package" | grep -Fx LICENSE.txt
           unzip -Z1 "$package" | grep -Fx 'lib/net10.0/DeltaZulu.Parse.dll'
           ! unzip -Z1 "$package" | grep -E '(^|/)(DeltaZulu\.Parse\.Tests|LogNormalizer\.Cli|DeltaZulu\.Parse\.Benchmarks)(/|\.)'
+
+      - name: Publish lognormalizer single-file binaries
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$BINARY_OUTPUT"
+          for rid in linux-x64 linux-arm64 osx-x64 osx-arm64 win-x64; do
+            publish_dir="$RUNNER_TEMP/lognormalizer-$rid"
+            dotnet publish src/tools/LogNormalizer.Cli/LogNormalizer.Cli.csproj \
+              --configuration Release \
+              --no-restore \
+              --runtime "$rid" \
+              --self-contained true \
+              --output "$publish_dir" \
+              /p:PublishSingleFile=true \
+              /p:EnableCompressionInSingleFile=true \
+              /p:DebugType=embedded \
+              /p:PackageVersion="$PACKAGE_VERSION"
+
+            if [[ "$rid" == win-* ]]; then
+              binary="$publish_dir/lognormalizer.exe"
+              asset="$BINARY_OUTPUT/lognormalizer-$PACKAGE_VERSION-$rid.zip"
+              test -f "$binary"
+              (cd "$publish_dir" && zip -9 -q "$asset" lognormalizer.exe)
+            else
+              binary="$publish_dir/lognormalizer"
+              asset="$BINARY_OUTPUT/lognormalizer-$PACKAGE_VERSION-$rid.tar.gz"
+              test -f "$binary"
+              chmod +x "$binary"
+              tar -C "$publish_dir" -czf "$asset" lognormalizer
+            fi
+          done
+          find "$BINARY_OUTPUT" -maxdepth 1 -type f -print -exec ls -lh {} \;
 
       - name: Publish package to GitHub Packages
         env:
@@ -124,7 +156,12 @@ jobs:
             echo "Release '$RELEASE_TAG' already exists."
           else
             gh release create "$RELEASE_TAG" \
+              --verify-tag \
               --title "DeltaZulu.Parse $PACKAGE_VERSION" \
-              --notes "Published DeltaZulu.Parse $PACKAGE_VERSION to GitHub Packages." \
-              "$PACKAGE_OUTPUT/DeltaZulu.Parse.$PACKAGE_VERSION.nupkg"
+              --notes "Published DeltaZulu.Parse $PACKAGE_VERSION to GitHub Packages. Portable single-file lognormalizer binaries are attached for Linux, macOS, and Windows."
           fi
+
+          gh release upload "$RELEASE_TAG" "$PACKAGE_OUTPUT/DeltaZulu.Parse.$PACKAGE_VERSION.nupkg" --clobber
+          for asset in "$BINARY_OUTPUT"/*; do
+            gh release upload "$RELEASE_TAG" "$asset" --clobber
+          done
